@@ -131,7 +131,9 @@ src/
   wallet/           wallet ledger (the only place money changes)
   admin/            admin operations
   lib/              env, logger, supabase, origins, lifecycle, shutdown, version
-supabase/migrations/  numbered SQL migrations (applied by a human)
+supabase/
+  migrations/       numbered SQL migrations (applied by a human)
+  tests/            local Postgres shim + SQL behaviour checks for the migrations
 tests/                Vitest suites
 ```
 
@@ -176,5 +178,53 @@ curl -s localhost:2567/health # {"ok":true,"version":"0.1.0","uptimeSeconds":3}
 curl -s -o /dev/null -w '%{http_code}\n' localhost:2567/ready   # 200 with a valid Supabase config, 503 otherwise
 PORT= node dist/index.js      # prints that PORT is missing and exits 1
 ```
+
+### Database schema - migrations 001 to 007
+
+Added the full baseline schema as seven ordered SQL files in
+`supabase/migrations`, plus `supabase/README.md` with the run order, a summary of
+each file, the conventions and the decisions that need your review.
+
+- `001` profiles and players, with `players.is_bot` generated from `kind` so a
+  bot can never be presented as a human.
+- `002` wallet accounts and the append-only ledger: `post_ledger_transaction()`
+  writes a transaction and its legs atomically, requires the legs to sum to
+  exactly zero, refuses to overdraw a user account, refuses unknown accounts and
+  unknown entry fields, and returns the original row when the idempotency key has
+  been used. Triggers reject `UPDATE` and `DELETE` on the transaction and entry
+  tables. `account_balances` derives balances instead of storing them.
+- `003` matches, seats and the hash-chained, append-only `match_events` log.
+- `004` tournaments, entries, the bracket, and the `matches.tournament_id`
+  foreign key that file 3 could not declare yet.
+- `005` markets and bets, the `updated_at` trigger, and the `open_liability` and
+  `house_bankroll` views.
+- `006` row level security on every table, read policies (own data for profiles,
+  wallets, ledger entries and bets; public reads for players, matches,
+  tournaments, markets and finished-match events), revoked browser writes, and
+  the realtime publication.
+- `007` the house account, the escrow account and six labelled bots.
+
+All money columns are `bigint` in the smallest unit; there is no floating point
+money column anywhere. Every table, view, function and most columns carry a
+comment. Every file runs in a transaction and creates its objects conditionally.
+
+How to test it: `supabase/tests/run.sh` builds a scratch database, applies a
+stand-in for Supabase's `auth` schema, roles and realtime publication, runs all
+seven migrations in order, then runs `supabase/tests/verify.sql`, which asserts
+23 behaviours (ledger arithmetic, refusal cases, idempotency, append-only
+triggers, both views, row level security for a user and for an anonymous
+visitor, the publication contents and comment coverage) and prints `PASS` for
+each:
+
+```bash
+./supabase/tests/run.sh          # needs a local Postgres with create-database rights
+```
+
+Verified against PostgreSQL 15.19: all seven files apply cleanly, re-running all
+seven is a no-op with no duplicate seed rows, and all 23 checks pass.
+
+Nothing in this schema is wired into the server yet: `src/wallet`, `src/betting`
+and the rooms still need their code, and `post_ledger_transaction()` is the
+function they will call.
 
 No game logic exists yet: there are no rooms, no engines and no betting code.
