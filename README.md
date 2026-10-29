@@ -260,7 +260,7 @@ the twelve open questions are written up in `docs/carrom-rules.md`.
 How to test it:
 
 ```bash
-npm test                  # 43 tests, including 42 for the engine and the rng
+npm test                  # 51 tests, including 50 for the engine and the rng
 npm run carrom:demo       # plays a whole board with random legal shots
 npm run carrom:demo -- --seed my-seed --max-shots 400
 ```
@@ -268,7 +268,8 @@ npm run carrom:demo -- --seed my-seed --max-shots 400
 The suite covers determinism (same input twice, and a twelve-shot sequence
 replayed), the invariants after every shot of a board (no overlap, nothing off the
 board), a straight shot that pockets a coin next to a pocket, every rule above
-including queen cover and return, both fouls, penalty debt and board scoring, and
+including queen cover and return, both fouls, penalty debt and board scoring,
+config validation and striker placement (including a blocked baseline), and
 performance: a twenty-shot board without frames takes about 7 ms here, printed by
 the test, which fails above 20 ms. The demo plays a board to an end and, with the
 default seed, a whole match.
