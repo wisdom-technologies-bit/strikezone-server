@@ -42,9 +42,11 @@ function playBoard(seed: string): CarromState {
 
 describe("performance", () => {
   it(`simulates ${SHOTS} shots without frames in under ${BUDGET_MS} ms`, () => {
-    // Warm up, then take the best of three runs: this measures the engine, not
-    // the first-call cost of the JIT.
-    playBoard("perf-warmup");
+    // Warm up properly, then take the best of three runs: this measures the
+    // engine, not the first-call cost of the JIT.
+    for (let warmup = 0; warmup < 3; warmup += 1) {
+      playBoard(`perf-warmup-${warmup}`);
+    }
 
     const runs: number[] = [];
     for (let run = 0; run < 3; run += 1) {
