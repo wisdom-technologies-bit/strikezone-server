@@ -53,6 +53,7 @@ Copy .env.example to .env and fill in every value (see README.md).
 | `npm run typecheck`                | `tsc --noEmit` over sources and tests              |
 | `npm run verify-match -- <id>`     | Re-check a finished match from the database        |
 | `npm run carrom:watch -- <roomId>` | Spectate a live room from the terminal             |
+| `npm run tournament:demo`          | Create, play out and print a whole tournament      |
 
 ## Environment variables
 
@@ -130,7 +131,7 @@ src/
   engines/carrom/   pure Carrom rules, and the bots
   engines/ludo/     pure Ludo rules
   rooms/            the referee and the Colyseus room
-  tournaments/      brackets, rounds, progression
+  tournaments/      brackets, rounds, progression, the scheduler and prizes
   odds/             odds model and simulator
   betting/          bets, markets, liability
   wallet/           wallet ledger (the only place money changes)
@@ -588,3 +589,50 @@ matter most here are the in-process match (a full Master vs Club match, verified
 the real-WebSocket room tests, and the tamper cases (edited payload, dropped row,
 result that disagrees with the replayed board) which must all fail with the event
 that gave them away.
+
+### Tournaments - brackets, money and a job runner
+
+`src/tournaments` runs a tournament from the admin's first click to the champion's
+prize. The design is in `src/tournaments/README.md`; the short version:
+
+- **Two formats behind one seam.** Single elimination (2 to 64 players, byes to
+  the best seeds) and round robin (3 to 8, every pair once, circle method). A
+  format answers three questions - what the schedule is, where a winner goes, and
+  who finished where - and nothing else in the codebase asks which one is running.
+  The game is a field on the config, not a branch in the logic: the only game-aware
+  code is the launcher that maps a game name to a room name.
+- **The lifecycle lives in the database.** draft, registration, running, finished,
+  cancelled, with entries, bracket positions, matches and money all as rows. A
+  restart is a tick: `resume()` asks what is due and does it, which is exactly what
+  a ten-second tick does.
+- **Money is three ledger transactions.** The entry fee in, the refund out, and one
+  balanced transaction at the end carrying the rake, the prizes and the house's
+  share. Every one is keyed, so repeating a call returns the first transaction
+  rather than paying twice.
+- **Races are settled by conditional writes.** Two servers cannot both start a
+  tournament, launch a match or decide a bracket position, and the test that
+  proves it gives the scheduler a lease that always says yes.
+- **Walkovers.** A human who has not connected three minutes after the match was
+  due loses it to the player who is there.
+
+A bot's prize never pays a bot: it passes to the best-placed human below, or stays
+with the house, per `botPrizePolicy`.
+
+To see a whole tournament play itself out against a running server (bot entries
+pay no fee, so no money is created):
+
+```
+npm run dev                                   # in one terminal
+npm run tournament:demo -- --players 8        # in another
+```
+
+It creates the tournament through the admin API, lets the scheduler fill and play
+it, prints the champion, the prize split and every bracket result, and finishes by
+listing the `npm run verify-match -- <id>` commands that re-check each match from
+the database alone.
+
+What the tests cover, in numbers: 43 Vitest tests across 5 files for the
+tournament work alone (brackets for every entrant count, the two formats'
+finishing orders, the prize split and its balance invariant, the full lifecycle,
+walkovers, cancellation refunds, restart recovery, the scheduler's lease and a
+lying lease), plus 155 across the repository.
