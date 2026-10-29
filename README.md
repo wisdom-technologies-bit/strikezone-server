@@ -360,3 +360,58 @@ weaker bot misses more often than a stronger one over many seeds, and that the
 same seed and state produce the same shot.
 
 Next: recording a match so the result can be checked afterwards.
+
+#### The match log, storage and verification
+
+A finished match can be checked by anyone holding the database, which is the
+point: the server says a match ended 25-3, and the claim can be tested rather than
+trusted.
+
+**The log** (`src/lib/match-log.ts`) is append-only and hash-chained:
+
+```
+hash(n) = SHA-256( hash(n-1) + canonicalJson({ seq: n, type, payload }) )
+hash(0) = the seed commitment
+```
+
+Every shot, every rule event, every timeout and every forfeit is a row, written by
+the referee and by nothing else. `prev_hash` links each row to the one before it,
+so editing a power value, dropping a row or reordering two rows breaks every later
+hash. `verifyLogChain` walks the chain, checks the sequence numbers are contiguous
+from 1, checks each link, and checks the first link is the commitment.
+
+`signResult` is an HMAC-SHA256, keyed with `RESULT_SIGNING_SECRET`, over the
+canonical result plus the *head* of the chain. Signing the head as well as the
+result binds the outcome to the log: a different log produces a different
+signature. The log is sealed before the signature is taken, so the closing
+`match_end` row is covered too.
+
+**Storage** (`src/lib/match-repository.ts`) is one interface with two
+implementations: `SupabaseMatchRepository` over the tables from migrations 003,
+and `InMemoryMatchRepository`, which enforces the same rules (append-only,
+contiguous sequence numbers, no going back from `finished`) so the whole of live
+play can be tested with no database and no network. `src/lib/match-store.ts` holds
+the single store the process uses and resolves it lazily, so importing it never
+builds a client and tests can swap in the in-memory one.
+
+**Verification** (`src/lib/match-verify.ts`, and `npm run verify-match -- <id>`)
+reports the first failure with the log sequence number where it happened:
+
+1. the match is finished and has a revealed seed;
+2. the revealed seed hashes to the commitment published before play;
+3. the chain is intact from that commitment to its head, and the head stored on
+   the match is that head;
+4. every recorded shot, replayed through the engine from the seed, produces
+   exactly the events the log recorded for it;
+5. the replay's final score and shot count match the signed result;
+6. the result signature verifies.
+
+Nothing in there trusts the room: it uses the stored log, the stored result and
+the engine, and nothing else.
+
+How to test it: `npm test -- tests/lib` and `tests/rooms/carrom-match-runner.test.ts`.
+The tests prove the happy path and that tampering is caught: an edited shot
+payload, a dropped row, and a result that disagrees with the replayed board are
+each rejected, with the failing sequence number reported.
+
+Next: the referee that produces all of this.
