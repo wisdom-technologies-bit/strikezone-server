@@ -7,6 +7,9 @@ import { logger } from "./lib/logger.js";
 import { isOriginAllowed } from "./lib/origins.js";
 import { DEFAULT_DRAIN_TIMEOUT_MS, registerShutdownHandlers } from "./lib/shutdown.js";
 import { CarromRoom } from "./rooms/carrom-room.js";
+import { tournamentRepository } from "./tournaments/repository.js";
+import { SupabaseSchedulerLease, TournamentScheduler } from "./tournaments/scheduler.js";
+import { tournamentService } from "./tournaments/index.js";
 
 /**
  * Entry point: one HTTP server, one port.
@@ -49,6 +52,25 @@ logger.info(
   },
   "strikezone-server listening",
 );
+
+/**
+ * The tournament scheduler.
+ *
+ * It resumes first, which is the same code as a tick: whatever was left running
+ * when this process (or the one before it) stopped is picked up from the
+ * database, not from memory. The interval is ten seconds and never keeps the
+ * process alive on its own.
+ */
+const scheduler = new TournamentScheduler({
+  repository: tournamentRepository(),
+  service: tournamentService(),
+  lease: new SupabaseSchedulerLease(),
+});
+
+void scheduler.resume().catch((error: unknown) => {
+  logger.error({ err: error }, "could not resume the tournament scheduler");
+});
+scheduler.start();
 
 registerShutdownHandlers({
   gameServer,

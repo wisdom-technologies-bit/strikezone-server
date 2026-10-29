@@ -1,7 +1,9 @@
 import express, { type ErrorRequestHandler, type Express } from "express";
 import cors, { type CorsOptions } from "cors";
 import { monitor } from "@colyseus/monitor";
+import { createAdminTournamentsRouter } from "./api/admin-tournaments.js";
 import { botsRouter } from "./api/bots.js";
+import { createTournamentsRouter } from "./api/tournaments.js";
 import { createDevRouter } from "./api/dev.js";
 import { healthRouter } from "./api/health.js";
 import { matchesRouter } from "./api/matches.js";
@@ -57,6 +59,8 @@ export function createApp(): Express {
   app.use(readyRouter);
   app.use(botsRouter);
   app.use(matchesRouter);
+  app.use(createTournamentsRouter());
+  app.use(createAdminTournamentsRouter());
 
   /**
    * Development only: the bot match starter, and Colyseus's monitor so the rooms
