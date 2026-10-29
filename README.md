@@ -126,16 +126,18 @@ ships a `HEALTHCHECK` that calls `/health` with `node`'s built-in `fetch`.
 src/
   app.ts            Express app (routes, CORS, 404, error handler)
   index.ts          HTTP server + Colyseus on one port, graceful shutdown wiring
-  api/              HTTP routes: /health, /ready
-  engines/carrom/   pure Carrom rules
+  api/              HTTP routes: /health, /ready, /api/bots, /api/matches, /dev
+  engines/carrom/   pure Carrom rules, and the bots
   engines/ludo/     pure Ludo rules
-  rooms/            Colyseus rooms
+  rooms/            the referee and the Colyseus room
   tournaments/      brackets, rounds, progression
   odds/             odds model and simulator
   betting/          bets, markets, liability
   wallet/           wallet ledger (the only place money changes)
   admin/            admin operations
-  lib/              env, logger, supabase, origins, lifecycle, shutdown, version
+  lib/              env, logger, supabase, origins, lifecycle, shutdown, version,
+                    fair-rng, canonical-json, match-log, match-repository,
+                    match-store, match-verify
 supabase/
   migrations/       numbered SQL migrations (applied by a human)
   tests/            local Postgres shim + SQL behaviour checks for the migrations
@@ -530,3 +532,59 @@ or stops at the first failure with the event it happened at, for example
 `FAIL <id>: the replay ends 21-6 but the result says 26-3`, and exits 1.
 
 Next: what was decided along the way, and what to watch out for.
+
+#### Decisions, and what to watch out for
+
+1. **The seed never touches a client-visible row before the reveal.** The match row
+   holds the commitment; the seed lives in the process that runs the room and is
+   written to `seed_reveal` only when the match finishes. The room therefore has to
+   be handed the seed at creation, which is server-only, and it re-checks
+   `commitOf(seed) === seed_commit` before starting. That check is what closes the
+   hole: a client that tried to create the room itself could only supply a seed
+   that fails it, so it cannot choose the RNG stream.
+2. **The signature covers the log head, not just the result.** Signing the result
+   alone would let the log be rewritten while the signature still verified. The log
+   is sealed first (`match_end` written) and then the head is signed, so the
+   closing row is inside the signature too.
+3. **The in-memory store enforces the database's rules.** Append-only events,
+   contiguous sequence numbers, no transitions out of `finished`. Without that the
+   offline tests would prove less than they look like they prove.
+4. **`@colyseus/schema` 5 dropped `defineTypes`.** It is deprecated and, called by
+   hand, it no longer wires up the metadata the encoder needs (`Cannot read
+properties of undefined (reading 'Symbol(Symbol.metadata)')`). The room state uses
+   the `schema()` builder with `t.*` fields instead, which also means the project
+   needs no decorator compiler settings.
+5. **A consented leave is close code 4000.** Colyseus's `CloseCode.CONSENTED` is
+   4000, not the WebSocket `1000`. Treating 1000 as "left on purpose" sent every
+   deliberate leave down the reconnection path and held the room for the full
+   window. Anything that is not 4000 is treated as a drop.
+6. **Rooms do not auto-dispose.** A room that disposes when it has no clients can be
+   taken down by a single failed join attempt, which is a denial of service for the
+   player who is in it. `autoDispose` is off; the room closes ten seconds after the
+   result, or when the process drains.
+7. **`onCreate` must be awaited.** Returning before the async setup finished let a
+   client join and be refused as "not seated" because the match had not been loaded
+   yet. Colyseus awaits `onCreate`, so the setup is awaited inside it.
+8. **One queue, one state change at a time.** Early on, two bot loops could run
+   concurrently around an `await` and apply shots against stale state, which showed
+   up as missing log sequence numbers and a replay that disagreed with the result.
+   Every state-changing path now goes through one queue, and the bot loop has an
+   activity flag.
+9. **Bots needed a banker to finish a board.** With straight pots only, a board
+   could stall for hundreds of shots once the coins that were easy to pot were gone;
+   matches reached the board limit instead of a score. Adding one-cushion bank
+   candidates took a Master vs Club match to 289-387 shots over 7-8 boards, which is
+   why the board shot limit (400) is a safety net rather than a normal ending.
+10. **Timeouts are per seat, and the safe shot keeps play moving.** A timeout plays
+    `safeShot()` rather than passing the turn, so a match between two idle humans
+    still terminates: each seat's third timeout forfeits it. The timeout count is in
+    the room state so a client can show it.
+11. **Spectators are anonymous and inert.** They receive every broadcast and every
+    state patch, and a shot from one is refused with `code: "spectator"`. Cap 20 per
+    room; `maxClients` is two seats plus that cap.
+
+What the tests cover, in numbers: 104 Vitest tests across 15 files. The ones that
+matter most here are the in-process match (a full Master vs Club match, verified),
+the real-WebSocket room tests, and the tamper cases (edited payload, dropped row,
+result that disagrees with the replayed board) which must all fail with the event
+that gave them away.
