@@ -26,7 +26,7 @@ export default tseslint.config(
   },
   {
     // Application and test code: the AI_RULES.md bans apply here.
-    files: ["src/**/*.ts", "tests/**/*.ts"],
+    files: ["src/**/*.ts", "tests/**/*.ts", "scripts/**/*.ts"],
     rules: {
       "no-restricted-syntax": [
         "error",
@@ -47,7 +47,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ["src/lib/env.ts", "src/index.ts", "tests/**/*.ts"],
+    files: ["src/lib/env.ts", "src/index.ts", "tests/**/*.ts", "scripts/**/*.ts"],
     rules: { "no-console": "off" },
   },
 );
