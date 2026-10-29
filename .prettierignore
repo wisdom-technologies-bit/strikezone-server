@@ -1,0 +1,6 @@
+dist/
+coverage/
+node_modules/
+package-lock.json
+# Authored by the project owner; formatters must not rewrite the rules file.
+AI_RULES.md
