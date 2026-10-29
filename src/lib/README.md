@@ -16,5 +16,18 @@ Shared infrastructure with no game rules in it.
   up to 30 seconds, then exit.
 - `version.ts` - the version reported by `GET /health`.
 
-`fair-rng.ts` (the seeded provably fair generator required by AI_RULES.md hard
-rule 3) will live here before any game code is added.
+Game and match support:
+
+- `fair-rng.ts` - the only source of game randomness (AI_RULES.md hard rule 3):
+  match seeds, their commitments, per-draw HMAC randomness, gaussian noise, and
+  the older seeded generator used where only reproducibility is needed.
+- `canonical-json.ts` - stable JSON serialisation, so a hash means the same thing
+  on both sides.
+- `match-log.ts` - the hash-chained, append-only record of a match, and the HMAC
+  result signature over its head.
+- `match-repository.ts` - everything a match reads or writes, as one interface
+  with Supabase and in-memory implementations.
+- `match-store.ts` - the process-wide store, resolved lazily so importing it never
+  builds a Supabase client.
+- `match-verify.ts` - independent verification of a finished match: commitment,
+  chain, per-shot replay, final score and signature.

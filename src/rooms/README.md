@@ -17,3 +17,16 @@ Constraints from AI_RULES.md:
   (hard rule 3).
 - A draining process refuses new rooms and finishes what is running, up to 30
   seconds (see `src/lib/shutdown.ts`).
+
+Files:
+
+- `carrom-match-runner.ts` - the referee. Owns one match: rules, clock, bots,
+  timeouts, forfeits and the log. Deliberately not a room, so a whole match can be
+  played and verified in a test with no server and no socket.
+- `carrom-room.ts` - the Colyseus room: auth, zod-validated messages, spectator
+  guard, state mirroring, reconnection. It decides nothing itself.
+- `carrom-room-schema.ts` - the room state, declared with `@colyseus/schema` 5's
+  `schema()` builder so no decorator settings are needed.
+
+A client sends `{ type: "shot", shot: { strikerPosition, angle, power },
+expectedShot? }` and nothing else. Everything else is the referee's.

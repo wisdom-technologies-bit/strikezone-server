@@ -41,16 +41,18 @@ Copy .env.example to .env and fill in every value (see README.md).
 
 ## Scripts
 
-| Script               | What it does                                       |
-| -------------------- | -------------------------------------------------- |
-| `npm run dev`        | `tsx watch` on `src/index.ts` (restarts on change) |
-| `npm run build`      | Type-check and compile `src` to `dist`             |
-| `npm start`          | Run the compiled server from `dist`                |
-| `npm test`           | Vitest, single run                                 |
-| `npm run test:watch` | Vitest in watch mode                               |
-| `npm run lint`       | ESLint                                             |
-| `npm run format`     | Prettier write                                     |
-| `npm run typecheck`  | `tsc --noEmit` over sources and tests              |
+| Script                             | What it does                                       |
+| ---------------------------------- | -------------------------------------------------- |
+| `npm run dev`                      | `tsx watch` on `src/index.ts` (restarts on change) |
+| `npm run build`                    | Type-check and compile `src` to `dist`             |
+| `npm start`                        | Run the compiled server from `dist`                |
+| `npm test`                         | Vitest, single run                                 |
+| `npm run test:watch`               | Vitest in watch mode                               |
+| `npm run lint`                     | ESLint                                             |
+| `npm run format`                   | Prettier write                                     |
+| `npm run typecheck`                | `tsc --noEmit` over sources and tests              |
+| `npm run verify-match -- <id>`     | Re-check a finished match from the database        |
+| `npm run carrom:watch -- <roomId>` | Spectate a live room from the terminal             |
 
 ## Environment variables
 
@@ -75,10 +77,13 @@ so the website can run locally against this server.
 
 ## HTTP endpoints
 
-| Endpoint      | Status              | Response                                                           |
-| ------------- | ------------------- | ------------------------------------------------------------------ |
-| `GET /health` | 200 while running   | `{ "ok": true, "version": "0.1.0", "uptimeSeconds": 42 }`          |
-| `GET /ready`  | 200 when ready, 503 | `{ "ok": true, "checks": { "draining": "up", "supabase": "up" } }` |
+| Endpoint                      | Status                      | Response                                                           |
+| ----------------------------- | --------------------------- | ------------------------------------------------------------------ |
+| `GET /health`                 | 200 while running           | `{ "ok": true, "version": "0.1.0", "uptimeSeconds": 42 }`          |
+| `GET /ready`                  | 200 when ready, 503         | `{ "ok": true, "checks": { "draining": "up", "supabase": "up" } }` |
+| `GET /api/bots`               | 200                         | The bot catalogue: level, name, policy id, numbers                 |
+| `GET /api/matches/:id/replay` | 200, 404                    | Seats, hash-chained events, chain check, result                    |
+| `POST /dev/start-match`       | 201, 400 (development only) | `{ matchId, roomId, seedCommit, seats }`                           |
 
 `/health` never touches the database, so a database outage does not restart an
 otherwise healthy process. `/ready` runs the Supabase connection test (a
@@ -381,7 +386,7 @@ hash. `verifyLogChain` walks the chain, checks the sequence numbers are contiguo
 from 1, checks each link, and checks the first link is the commitment.
 
 `signResult` is an HMAC-SHA256, keyed with `RESULT_SIGNING_SECRET`, over the
-canonical result plus the *head* of the chain. Signing the head as well as the
+canonical result plus the _head_ of the chain. Signing the head as well as the
 result binds the outcome to the log: a different log produces a different
 signature. The log is sealed before the signature is taken, so the closing
 `match_end` row is covered too.
@@ -475,3 +480,53 @@ shoots on their turn and not out of turn, an illegal power and a stale move are
 refused, and an unseated token is refused without disturbing the player who is in.
 
 Next: endpoints and scripts, so this can be driven from outside.
+
+#### Endpoints and scripts
+
+`GET /api/bots` publishes the catalogue described above, straight from
+`bot-config.ts`.
+
+`GET /api/matches/:id/replay` is the public record: the seats, every log row, and
+`verification` (whether the chain is intact and where its head is). `seedReveal` is
+null while the match is live and filled in once it has finished. Anyone can poll
+it, so a player can check that the commitment they were shown before the match is
+the one the seed hashes to afterwards.
+
+`POST /dev/start-match` exists so the whole pipeline can be exercised locally
+without two browsers. It is mounted **only** while `NODE_ENV=development`; in test
+and production the route does not exist at all. Body (all optional, all validated
+with zod, unknown fields rejected): `{ white: { bot }, black: { bot }, turnSeconds,
+allowSpectators }`. It creates the match, commits to a fresh seed, creates the room
+with that seed, and returns `{ matchId, roomId, seedCommit, seats }` plus the two
+commands below.
+
+```bash
+npm run dev
+curl -s -X POST localhost:2567/dev/start-match -H 'content-type: application/json' -d '{}'
+# -> { "matchId": "...", "roomId": "...", "seedCommit": "...", ... }
+npm run carrom:watch -- <roomId>      # follow the shots in the terminal
+npm run verify-match -- <matchId>     # check the finished match
+```
+
+`npm run carrom:watch` is a spectator client: it joins anonymously, prints the
+state and every shot, and leaves when the match ends. It is also the quickest way
+to see that a client needs no seat to follow a match and can do nothing else.
+Colyseus's own monitor is mounted at `/colyseus` in development for the same
+purpose.
+
+`npm run verify-match` works from the database alone and prints:
+
+```
+ok   match_finished
+ok   seed_commit
+ok   hash_chain
+ok   shot_replay
+ok   final_result
+ok   result_signature
+PASS 5f0c...: 313 shots replayed, chain, result and signature intact
+```
+
+or stops at the first failure with the event it happened at, for example
+`FAIL <id>: the replay ends 21-6 but the result says 26-3`, and exits 1.
+
+Next: what was decided along the way, and what to watch out for.

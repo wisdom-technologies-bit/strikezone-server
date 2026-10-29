@@ -6,6 +6,7 @@ import { env } from "./lib/env.js";
 import { logger } from "./lib/logger.js";
 import { isOriginAllowed } from "./lib/origins.js";
 import { DEFAULT_DRAIN_TIMEOUT_MS, registerShutdownHandlers } from "./lib/shutdown.js";
+import { CarromRoom } from "./rooms/carrom-room.js";
 
 /**
  * Entry point: one HTTP server, one port.
@@ -31,7 +32,10 @@ const transport = new WebSocketTransport({
 
 const gameServer = new ColyseusServer({ transport, greet: false });
 
-// Rooms are defined here in later tasks; no game logic exists yet.
+// One room type: a live carrom match. Only the server creates these, through
+// POST /dev/start-match in development or matchmaking later; clients join by id.
+gameServer.define("carrom", CarromRoom);
+
 await gameServer.listen(env.PORT);
 
 logger.info(

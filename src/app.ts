@@ -1,7 +1,12 @@
 import express, { type ErrorRequestHandler, type Express } from "express";
 import cors, { type CorsOptions } from "cors";
+import { monitor } from "@colyseus/monitor";
+import { botsRouter } from "./api/bots.js";
+import { createDevRouter } from "./api/dev.js";
 import { healthRouter } from "./api/health.js";
+import { matchesRouter } from "./api/matches.js";
 import { readyRouter } from "./api/ready.js";
+import { env } from "./lib/env.js";
 import { isOriginAllowed } from "./lib/origins.js";
 import { logger } from "./lib/logger.js";
 
@@ -50,6 +55,18 @@ export function createApp(): Express {
 
   app.use(healthRouter);
   app.use(readyRouter);
+  app.use(botsRouter);
+  app.use(matchesRouter);
+
+  /**
+   * Development only: the bot match starter, and Colyseus's monitor so the rooms
+   * and their state can be watched in a browser. Neither is mounted in test or
+   * production, so the route does not exist there at all.
+   */
+  if (env.NODE_ENV === "development") {
+    app.use(createDevRouter());
+    app.use("/colyseus", monitor());
+  }
 
   app.use((_request, response) => {
     response.status(404).json({ ok: false, error: "not_found" });
