@@ -1,20 +1,147 @@
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 
 /**
- * Seeded, reproducible random numbers for game code.
+ * Provably fair randomness for matches.
  *
- * AI_RULES.md forbids Math.random in game, bot and odds code: everything random
- * must come from here, so that a match can be replayed and so that a seed can be
- * committed to before play and revealed afterwards. This is an independent
- * implementation of the public sfc32 generator, seeded from a SHA-256 digest of
- * the seed text; no third-party code is involved.
+ * AI_RULES.md hard rule 3: all game randomness comes from here, and no game,
+ * bot or odds code calls Math.random.
+ *
+ * The flow:
+ * 1. `createMatchSeed()` makes 32 random bytes. This is the only place a seed is
+ *    created, and the only place `randomBytes` is used for seeds.
+ * 2. `commitOf(seed)` is published before the match starts, so the server is
+ *    locked in before anyone plays.
+ * 3. Every random number the match needs is `rngAt(seed, matchId, nonce)`: an
+ *    HMAC-SHA256 of the seed with `matchId:nonce`. The nonce simply counts up, so
+ *    anyone holding the seed can re-derive every draw in order.
+ * 4. At the end the seed is revealed and `verifyCommit` checks it against the
+ *    commitment published at the start.
+ *
+ * `createSeededRng` is the separate, in-process generator used where the result
+ * only has to be reproducible (the engine's own tests and the demo). It is not
+ * what a match uses: a match uses the HMAC stream above.
  */
 
-export interface SeededRng {
+/** Anything that can produce a uniform number in [0, 1). */
+export interface UniformRng {
+  nextFloat(): number;
+}
+
+/** The seed length in bytes. */
+export const MATCH_SEED_BYTES = 32;
+
+const TWO_POW_32 = 4_294_967_296;
+const TWO_POW_48 = 281_474_976_710_656;
+
+// ---------------------------------------------------------------------------
+// Seeds, commitments and per-draw randomness
+// ---------------------------------------------------------------------------
+
+/** A fresh 256-bit match seed as hex. The only seed source in the codebase. */
+export function createMatchSeed(): string {
+  return randomBytes(MATCH_SEED_BYTES).toString("hex");
+}
+
+/** The commitment published before the match: SHA-256 of the seed, as hex. */
+export function commitOf(seed: string): string {
+  return createHash("sha256").update(seed, "utf8").digest("hex");
+}
+
+/**
+ * Checks a revealed seed against the commitment published before play.
+ *
+ * A malformed commitment is simply a failed verification, never a throw: the
+ * caller is comparing data it does not trust.
+ */
+export function verifyCommit(seed: string, commit: string): boolean {
+  const expected = Buffer.from(commitOf(seed), "hex");
+  const actual = Buffer.from(commit, "hex");
+
+  if (expected.length !== actual.length || expected.length === 0) {
+    return false;
+  }
+  return timingSafeEqual(expected, actual);
+}
+
+/**
+ * The match's random number at one position in its stream, uniform in [0, 1).
+ *
+ * HMAC-SHA256 keyed by the seed, over `matchId:nonce`; the first six digest bytes
+ * are read as a 48-bit integer, which is exactly representable in a double.
+ */
+export function rngAt(seed: string, matchId: string, nonce: number): number {
+  if (!Number.isInteger(nonce) || nonce < 0) {
+    throw new RangeError(`nonce must be a whole number of at least 0, got ${nonce}`);
+  }
+  const digest = createHmac("sha256", seed).update(`${matchId}:${nonce}`, "utf8").digest();
+  return digest.readUIntBE(0, 6) / TWO_POW_48;
+}
+
+/** A stateful view of a match's stream: draws in order and counts them. */
+export interface MatchRng extends UniformRng {
+  /** The nonce the next draw will use. */
+  readonly nonce: number;
+  /** How many numbers have been drawn so far. */
+  readonly draws: number;
+  /** The next uniform number in [0, 1), then advances. */
+  nextFloat(): number;
+  /** A standard normal number, drawn from two uniforms. */
+  gaussian(): number;
+}
+
+/**
+ * Wraps `rngAt` in a counter, so a bot or a referee can draw repeatedly without
+ * tracking nonces, and `draws` records exactly how much randomness a match used.
+ */
+export function createMatchRng(seed: string, matchId: string, startNonce = 0): MatchRng {
+  let nonce = startNonce;
+  let draws = 0;
+
+  const rng: MatchRng = {
+    get nonce(): number {
+      return nonce;
+    },
+    get draws(): number {
+      return draws;
+    },
+    nextFloat(): number {
+      const value = rngAt(seed, matchId, nonce);
+      nonce += 1;
+      draws += 1;
+      return value;
+    },
+    gaussian(): number {
+      return gaussian(rng);
+    },
+  };
+
+  return rng;
+}
+
+/**
+ * Standard normal from two uniforms (Box-Muller).
+ *
+ * `u1` is floored at the smallest positive double so `log(0)` can never produce
+ * an infinity, whatever generator is passed in.
+ */
+export function gaussian(rng: UniformRng): number {
+  let first = rng.nextFloat();
+  const second = rng.nextFloat();
+
+  if (!(first > Number.EPSILON)) {
+    first = Number.EPSILON;
+  }
+
+  return Math.sqrt(-2 * Math.log(first)) * Math.cos(2 * Math.PI * second);
+}
+
+// ---------------------------------------------------------------------------
+// In-process generator, for reproducible tests and the demo
+// ---------------------------------------------------------------------------
+
+export interface SeededRng extends UniformRng {
   /** Raw 32-bit output of the generator. */
   nextUint32(): number;
-  /** Uniform in [0, 1). */
-  nextFloat(): number;
   /** Uniform integer in [min, max], both inclusive. */
   nextInt(min: number, max: number): number;
   /** Uniform element of a non-empty list. */
@@ -22,8 +149,6 @@ export interface SeededRng {
   /** A separate stream derived from this seed and a label. */
   fork(label: string): SeededRng;
 }
-
-const TWO_POW_32 = 4_294_967_296;
 
 function seedWords(seed: string): [number, number, number, number] {
   const digest = createHash("sha256").update(seed, "utf8").digest();
@@ -35,7 +160,10 @@ function seedWords(seed: string): [number, number, number, number] {
   ];
 }
 
-/** Creates the generator for a seed. The same seed always yields the same stream. */
+/**
+ * The in-process generator: an independent implementation of the public sfc32
+ * algorithm, seeded from a SHA-256 digest of the seed text.
+ */
 export function createSeededRng(seed: string | number): SeededRng {
   const seedText = String(seed);
   const words = seedWords(seedText);
@@ -85,24 +213,4 @@ export function createSeededRng(seed: string | number): SeededRng {
       return createSeededRng(`${seedText}:${label}`);
     },
   };
-}
-
-/** A fresh 256-bit seed as hex. Uses the platform CSPRNG, not a game generator. */
-export function generateSeed(): string {
-  return randomBytes(32).toString("hex");
-}
-
-/** The commitment published before a match: SHA-256 of the seed, as hex. */
-export function hashSeed(seed: string): string {
-  return createHash("sha256").update(seed, "utf8").digest("hex");
-}
-
-/** Checks a revealed seed against the commitment published before play. */
-export function verifySeedCommit(seed: string, commitment: string): boolean {
-  const expected = Buffer.from(hashSeed(seed), "hex");
-  const actual = Buffer.from(commitment, "hex");
-  if (expected.length !== actual.length) {
-    return false;
-  }
-  return timingSafeEqual(expected, actual);
 }

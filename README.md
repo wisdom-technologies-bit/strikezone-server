@@ -277,4 +277,41 @@ default seed, a whole match.
 No bots, rooms or betting wiring yet: `applyShot` is what a room will call, and
 `BotPolicy` is the seam a bot plugs into.
 
-No game logic exists yet: there are no rooms, no engines and no betting code.
+### Live matches - bots, the referee and the log
+
+A match can now be played end to end between two bots and then verified by a
+stranger from the database alone. This section is the documentation for that: what
+each piece is, why it is built that way, and how to run it.
+
+#### Provably fair randomness
+
+`src/lib/fair-rng.ts` is the only source of game randomness in the repository
+(`AI_RULES.md` hard rule 3; the ESLint config rejects `Math.random` in `src/`).
+
+- `createMatchSeed()` makes 32 random bytes with `randomBytes`, and is the only
+  place a seed is created.
+- `commitOf(seed)` is the SHA-256 of the seed. It is published before the first
+  shot, so the server is locked in before anyone plays.
+- A match never draws from a PRNG stream. Every number is
+  `rngAt(seed, matchId, nonce)`: an HMAC-SHA256 of the seed keyed per match, with
+  a counter for the nonce. Anyone holding the revealed seed can re-derive every
+  draw in order, and no draw depends on how many numbers were drawn before it.
+- `gaussian(rng)` turns uniform draws into normal ones (Box-Muller), which is what
+  bot aim error needs; `verifyCommit` checks the revealed seed against the
+  commitment in constant time.
+
+`MatchRng` wraps that stream and counts the draws, so a result can record how much
+randomness the match consumed. `createSeededRng` (sfc32, SHA-256 seeded) remains
+for places that only need reproducibility rather than provable fairness: the
+engine's own tests and the demo.
+
+`src/lib/canonical-json.ts` exists for the same reason: a hash is only meaningful
+if both sides serialise identically, so keys are sorted, `undefined` is dropped
+and floats are written with a fixed rule. The log and the signature both use it.
+
+How to test it: `npm test -- tests/lib`. The suite covers determinism, the
+commitment round trip (including a wrong seed), that no two nonces repeat, and a
+chi-square check of 100,000 draws against uniformity (18.47 against a critical
+value of 43.82 here).
+
+Next: bots, so there is something to play against.
