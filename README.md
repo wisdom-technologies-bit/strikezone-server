@@ -415,3 +415,63 @@ payload, a dropped row, and a result that disagrees with the replayed board are
 each rejected, with the failing sequence number reported.
 
 Next: the referee that produces all of this.
+
+#### The referee and the room
+
+`src/rooms/carrom-match-runner.ts` is the referee. One runner owns one live match:
+the rules, the clock, the bots, the timeouts, the forfeits and the log. It knows
+nothing about WebSockets, which is why a whole match can be played and verified in
+a test with no server and no socket.
+
+Only the runner decides. A client sends one shot; turn order, legal placement,
+scoring, penalties, timeouts and forfeits are all decided here, by calling the same
+engine functions the tests use. A shot is refused, with a reason, when the match is
+not live, when it is not that seat's turn, when the message names a move that has
+already happened (`expectedShot`), when the engine rejects the placement or the
+power, or when the previous shot is still being resolved. Everything that changes
+state goes through one queue, so two messages can never interleave halfway through
+a shot.
+
+The clock: a human has 30 seconds (`turnSeconds`). Running out plays a safe shot
+for them and counts a timeout; the third timeout forfeits the match. A
+disconnected player has 60 seconds to come back before the same forfeit applies.
+Bots are not on the clock: they pause 1-3 seconds before shooting so the match
+reads like a game rather than a batch job.
+
+`src/rooms/carrom-room.ts` is the transport shell: it authenticates joins, validates
+every message with zod, mirrors the referee's snapshot into Colyseus state and
+forwards what the referee emits. It never decides a rule itself.
+
+- **Joining.** A seated human joins with a Supabase access token, checked with
+  `supabase.auth.getUser`, and the user must hold a seat in that match, otherwise
+  the join is refused. A spectator joins with `{ spectate: true }` and may be
+  anonymous; spectators receive every shot and may send nothing at all.
+- **Starting.** Only the server creates a room, and it hands the room the seed. A
+  client that tried to start a match itself would have to supply a seed that hashes
+  to the commitment already published for the match, which it cannot do.
+- **Messages.** `{ type: "shot", shot: { strikerPosition, angle, power }, expectedShot? }`,
+  validated with `z.strictObject` so unknown fields are rejected, including an
+  attempt to smuggle extra keys. A refused shot comes back as
+  `{ code, message }` with one of `not_live`, `match_over`, `not_your_turn`,
+  `stale_shot`, `illegal_shot`, `invalid_message`, `spectator`, `busy`.
+- **State.** The room state carries scores, board, coins, whose turn it is, the
+  turn deadline, each seat's timeout count and `isBot`, and the seed commitment.
+  The seed itself is never in the state, never in a message and never in a log
+  payload; it is revealed only when the match finishes.
+- **Lifecycle.** A room outlives its clients on purpose: a dropped player has a
+  reconnection window, and a failed join must not be able to dispose the room for
+  everyone else, so `autoDispose` is off and the room closes ten seconds after the
+  result.
+
+The room state is declared with `@colyseus/schema` 5's `schema()` builder rather
+than decorators, which keeps the project's plain TypeScript settings.
+
+How to test it: `npm test -- tests/rooms`. `carrom-match-runner.test.ts` plays a
+full Master vs Club match in-process (313 shots, 7 boards, 247 ms) and verifies it,
+then checks every refusal path and the tamper detection. `carrom-room.test.ts`
+boots a real Colyseus server and joins it with real clients: a bot match is
+spectated to its end and verified, a spectator is refused a shot, a seated player
+shoots on their turn and not out of turn, an illegal power and a stale move are
+refused, and an unseated token is refused without disturbing the player who is in.
+
+Next: endpoints and scripts, so this can be driven from outside.
