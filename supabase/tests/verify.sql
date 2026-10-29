@@ -364,7 +364,111 @@ begin
   raise notice 'PASS: realtime publication carries %', v_tables;
 end $$;
 
-\echo '--- 6. documentation coverage ---'
+
+\echo '--- 6. tournament lifecycle ---'
+do $$
+declare
+  v_tournament uuid;
+  v_pool uuid;
+  v_ok boolean;
+  v_status text;
+begin
+  insert into tournaments (game, name, format, entry_fee_minor, min_players, max_players, currency)
+  values ('carrom', 'Verify Cup', 'single_elimination', 1000, 4, 8, 'NGN')
+  returning id into v_tournament;
+
+  -- A prize pool must name its tournament, and only one may exist per tournament.
+  begin
+    insert into wallet_accounts (owner_type, currency) values ('prize_pool', 'NGN');
+    raise exception 'FAIL: a prize pool without a tournament was accepted';
+  exception when check_violation then
+    null;
+  end;
+
+  insert into wallet_accounts (owner_type, currency, tournament_id)
+  values ('prize_pool', 'NGN', v_tournament)
+  returning id into v_pool;
+
+  begin
+    insert into wallet_accounts (owner_type, currency, tournament_id)
+    values ('prize_pool', 'NGN', v_tournament);
+    raise exception 'FAIL: a second prize pool for the same tournament was accepted';
+  exception when unique_violation then
+    null;
+  end;
+
+  -- A bracket position starts pending and refuses an unknown status.
+  insert into tournament_matches (tournament_id, round, slot, winner_to_slot)
+  values (v_tournament, 1, 1, 1)
+  returning status into v_status;
+  if v_status <> 'pending' then
+    raise exception 'FAIL: a new bracket position is %', v_status;
+  end if;
+
+  begin
+    update tournament_matches set status = 'impossible' where tournament_id = v_tournament;
+    raise exception 'FAIL: an unknown bracket status was accepted';
+  exception when check_violation then
+    null;
+  end;
+
+  -- The registration window must run forwards.
+  begin
+    update tournaments
+       set registration_opens_at = now(),
+           registration_closes_at = now() - interval '1 hour'
+     where id = v_tournament;
+    raise exception 'FAIL: a backwards registration window was accepted';
+  exception when check_violation then
+    null;
+  end;
+
+  -- The scheduler lease: one holder at a time, and only until it expires.
+  v_ok := acquire_scheduler_lease('verify_job', 'instance-a', 60, 918273);
+  if not v_ok then
+    raise exception 'FAIL: the first lease attempt was refused';
+  end if;
+
+  v_ok := acquire_scheduler_lease('verify_job', 'instance-b', 60, 918273);
+  if v_ok then
+    raise exception 'FAIL: a second instance took a live lease';
+  end if;
+
+  -- A lease that has expired may be taken over, which is how a crash recovers.
+  update scheduler_leases set locked_until = now() - interval '1 second' where name = 'verify_job';
+  v_ok := acquire_scheduler_lease('verify_job', 'instance-b', 60, 918273);
+  if not v_ok then
+    raise exception 'FAIL: an expired lease was not taken over';
+  end if;
+
+  -- The same holder may renew, and releasing frees it immediately.
+  v_ok := acquire_scheduler_lease('verify_job', 'instance-b', 60, 918273);
+  if not v_ok then
+    raise exception 'FAIL: a holder could not renew its own lease';
+  end if;
+
+  if not release_scheduler_lease('verify_job', 'instance-b') then
+    raise exception 'FAIL: releasing a held lease reported nothing released';
+  end if;
+
+  v_ok := acquire_scheduler_lease('verify_job', 'instance-a', 60, 918273);
+  if not v_ok then
+    raise exception 'FAIL: a released lease could not be taken';
+  end if;
+
+  -- A withdrawal keeps the row and its ledger trail.
+  insert into tournament_entries (tournament_id, player_id, seed, status)
+  values (v_tournament, '33333333-3333-3333-3333-333333333333', 1, 'registered');
+  update tournament_entries set status = 'withdrawn', withdrawn_at = now()
+   where tournament_id = v_tournament;
+  if not found then
+    raise exception 'FAIL: an entry could not be marked withdrawn';
+  end if;
+
+  raise notice 'PASS: prize pools, bracket status, registration window and scheduler lease behave';
+end $$;
+
+\echo '--- 7. documentation coverage ---'
 do $$
 declare v_missing text;
 begin
