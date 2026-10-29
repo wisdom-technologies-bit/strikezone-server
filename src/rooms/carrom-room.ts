@@ -297,6 +297,18 @@ export class CarromRoom extends Room<{ state: CarromRoomStateInstance }> {
     }
 
     this.#runner?.setConnected(clientAuth.seat, true);
+
+    // The tournament walkover rule asks whether a human ever turned up, so the
+    // first join is written down. It is bookkeeping, never a rule of the match.
+    const matchId = this.#match?.id;
+    if (matchId !== undefined) {
+      void roomDeps()
+        .repository.recordJoin(matchId, clientAuth.seat, new Date().toISOString())
+        .catch((error: unknown) => {
+          logger.warn({ err: error, matchId }, "could not record the join");
+        });
+    }
+
     client.send("welcome", {
       matchId: this.#match?.id ?? "",
       spectate: false,

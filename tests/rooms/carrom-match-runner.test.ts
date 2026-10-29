@@ -257,6 +257,8 @@ describe("verification catches a tampered match", () => {
     appendEvents: MatchRepository["appendEvents"] = (id, entries) =>
       this.inner.appendEvents(id, entries);
     finish: MatchRepository["finish"] = (id, input) => this.inner.finish(id, input);
+    recordJoin: MatchRepository["recordJoin"] = (id, seat, at) =>
+      this.inner.recordJoin(id, seat, at);
 
     async get(matchId: string): Promise<MatchRecord | null> {
       const match = await this.inner.get(matchId);

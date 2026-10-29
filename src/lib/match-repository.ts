@@ -57,12 +57,27 @@ export interface MatchRecord {
   readonly logHeadHash: string | null;
   readonly startedAt: string | null;
   readonly endedAt: string | null;
+  /** When each seat first connected, or null if it never did. */
+  readonly seat1JoinedAt?: string | null;
+  readonly seat2JoinedAt?: string | null;
   readonly seats: readonly MatchSeat[];
 }
 
-/** One seat to create: an existing player, or a bot to make. */
+/** A player that already exists, with the identity the room needs to seat it. */
+export interface ExistingPlayer {
+  readonly id: string;
+  readonly displayName: string;
+  readonly isBot: boolean;
+  readonly botPolicy: string | null;
+  readonly botLevel: BotLevel | null;
+  readonly profileId: string | null;
+  readonly skill: Readonly<Record<string, number>>;
+}
+
+/** One seat to create: an existing player, a known player, or a bot to make. */
 export type CreateMatchSeat =
   | { readonly seat: 1 | 2; readonly playerId: string }
+  | { readonly seat: 1 | 2; readonly existingPlayer: ExistingPlayer }
   | {
       readonly seat: 1 | 2;
       readonly botLevel: BotLevel;
@@ -109,6 +124,11 @@ export interface MatchRepository {
   appendEvents(matchId: string, entries: readonly MatchLogEntry[]): Promise<void>;
   finish(matchId: string, input: FinishMatchInput): Promise<void>;
   listEvents(matchId: string): Promise<MatchLogEntry[]>;
+  /**
+   * Records that a seat connected, once. The tournament walkover rule reads
+   * this: a human who never joined loses three minutes after the match was due.
+   */
+  recordJoin(matchId: string, seat: 1 | 2, at: string): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -141,6 +161,20 @@ export class InMemoryMatchRepository implements MatchRepository {
     this.#nextMatch += 1;
 
     const seats: MatchSeat[] = input.seats.map((seat) => {
+      if ("existingPlayer" in seat) {
+        const player = seat.existingPlayer;
+        return {
+          seat: seat.seat,
+          playerId: player.id,
+          displayName: player.displayName,
+          isBot: player.isBot,
+          botPolicy: player.botPolicy,
+          botLevel: player.botLevel,
+          profileId: player.profileId,
+          skill: player.skill,
+        };
+      }
+
       if ("playerId" in seat) {
         return {
           seat: seat.seat,
@@ -179,6 +213,8 @@ export class InMemoryMatchRepository implements MatchRepository {
       logHeadHash: null,
       startedAt: null,
       endedAt: null,
+      seat1JoinedAt: null,
+      seat2JoinedAt: null,
       seats,
     };
 
@@ -271,6 +307,17 @@ export class InMemoryMatchRepository implements MatchRepository {
     return [...(this.#events.get(matchId) ?? [])];
   }
 
+  async recordJoin(matchId: string, seat: 1 | 2, at: string): Promise<void> {
+    const match = this.require(matchId);
+    // Only the first join counts: a reconnect must not reset the clock.
+    if (seat === 1 && (match.seat1JoinedAt ?? null) === null) {
+      this.#matches.set(matchId, { ...match, seat1JoinedAt: at });
+    }
+    if (seat === 2 && (match.seat2JoinedAt ?? null) === null) {
+      this.#matches.set(matchId, { ...match, seat2JoinedAt: at });
+    }
+  }
+
   private require(matchId: string): MatchRecord {
     const match = this.#matches.get(matchId);
     if (match === undefined) {
@@ -296,6 +343,8 @@ interface MatchRow {
   log_head_hash: string | null;
   started_at: string | null;
   ended_at: string | null;
+  seat_1_joined_at: string | null;
+  seat_2_joined_at: string | null;
 }
 
 interface SeatRow {
@@ -330,6 +379,11 @@ export class SupabaseMatchRepository implements MatchRepository {
     const seatRows: Array<{ seat: number; player_id: string }> = [];
 
     for (const seat of input.seats) {
+      if ("existingPlayer" in seat) {
+        seatRows.push({ seat: seat.seat, player_id: seat.existingPlayer.id });
+        continue;
+      }
+
       if ("playerId" in seat) {
         seatRows.push({ seat: seat.seat, player_id: seat.playerId });
         continue;
@@ -472,6 +526,19 @@ export class SupabaseMatchRepository implements MatchRepository {
     }
   }
 
+  async recordJoin(matchId: string, seat: 1 | 2, at: string): Promise<void> {
+    const column = seat === 1 ? "seat_1_joined_at" : "seat_2_joined_at";
+    const updated = await this.#client
+      .from("matches")
+      .update({ [column]: at })
+      .eq("id", matchId)
+      .is(column, null);
+
+    if (updated.error !== null) {
+      throw new MatchRepositoryError(`could not record the join: ${updated.error.message}`);
+    }
+  }
+
   async listEvents(matchId: string): Promise<MatchLogEntry[]> {
     const result = await this.#client
       .from("match_events")
@@ -529,6 +596,8 @@ export function toMatchRecord(row: MatchRow, seats: readonly SeatRow[]): MatchRe
     logHeadHash: row.log_head_hash,
     startedAt: row.started_at,
     endedAt: row.ended_at,
+    seat1JoinedAt: row.seat_1_joined_at ?? null,
+    seat2JoinedAt: row.seat_2_joined_at ?? null,
     seats: mapped,
   };
 }
