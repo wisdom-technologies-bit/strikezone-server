@@ -227,4 +227,53 @@ Nothing in this schema is wired into the server yet: `src/wallet`, `src/betting`
 and the rooms still need their code, and `post_ledger_transaction()` is the
 function they will call.
 
+### Carrom engine
+
+Built the carrom engine in `src/engines/carrom`, after reading
+`samiranrl/Carrom_rl` for its rules, board conventions, coin and striker setup and
+shot interface. That project is GPL v3, so nothing was copied, translated or
+paraphrased: every file carries a header naming the reference and stating the
+code is original. What I learned, the rules implemented, the fifteen decisions and
+the twelve open questions are written up in `docs/carrom-rules.md`.
+
+- `config.ts` holds every tunable in one place: 740 mm board, 45 mm pockets,
+  31 mm coins, 41 mm striker, 5 g and 15 g, wall restitution 0.6, coin
+  restitution 0.9, rolling friction 1600 mm/s², 1/240 s step, match limits.
+- `physics.ts` is custom circle physics, no third-party engine: fixed timestep,
+  rolling friction down to a stop threshold, wall bounces, pairwise impulses with
+  positional correction, pocket capture on the centre entering the pocket zone,
+  and a repeated pass so many bodies in the same step resolve without overlapping.
+  It is deterministic by construction and the tests assert it.
+- `rules.ts` is the ICF-style singles rules, pure and independent of physics:
+  turns, the queen (take after an own coin, cover on the same turn, return when
+  uncovered), fouls for the striker or an opponent's coin with a penalty coin or a
+  recorded debt, board scoring at 1 per opposing coin plus 3 for a covered queen,
+  and the 25-point or 8-board match.
+- `index.ts` is the public API: `createInitialState`, `getLegalStrikerRange`,
+  `applyShot` returning `{ state, events, frames }`, plus `BotPolicy` for bots
+  that do not exist yet. Shots are validated with zod, including rejection of
+  unknown fields. Frames are opt-in so the odds simulator can run without them.
+- `src/lib/fair-rng.ts` is the seeded generator AI_RULES.md requires: an
+  independent sfc32 implementation seeded from SHA-256, with seed commit and
+  verify helpers for the provably fair flow.
+
+How to test it:
+
+```bash
+npm test                  # 43 tests, including 42 for the engine and the rng
+npm run carrom:demo       # plays a whole board with random legal shots
+npm run carrom:demo -- --seed my-seed --max-shots 400
+```
+
+The suite covers determinism (same input twice, and a twelve-shot sequence
+replayed), the invariants after every shot of a board (no overlap, nothing off the
+board), a straight shot that pockets a coin next to a pocket, every rule above
+including queen cover and return, both fouls, penalty debt and board scoring, and
+performance: a twenty-shot board without frames takes about 7 ms here, printed by
+the test, which fails above 20 ms. The demo plays a board to an end and, with the
+default seed, a whole match.
+
+No bots, rooms or betting wiring yet: `applyShot` is what a room will call, and
+`BotPolicy` is the seam a bot plugs into.
+
 No game logic exists yet: there are no rooms, no engines and no betting code.
