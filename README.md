@@ -315,3 +315,48 @@ chi-square check of 100,000 draws against uniformity (18.47 against a critical
 value of 43.82 here).
 
 Next: bots, so there is something to play against.
+
+#### Bots
+
+Three levels, published through `GET /api/bots` and defined once in
+`src/engines/carrom/bot-config.ts`, so the numbers a player is shown are the
+numbers the bot actually plays with:
+
+| Level    | Display name | Aim error (degrees) | Power control | Candidate selection |
+| -------- | ------------ | ------------------- | ------------- | ------------------- |
+| `rookie` | Bot Rookie   | 4.0                 | 0.40          | 0.45                |
+| `club`   | Bot Club     | 2.0                 | 0.70          | 0.80                |
+| `master` | Bot Master   | 0.8                 | 0.95          | 0.98                |
+
+A bot is never a fake person: it is a `players` row with `kind = 'bot'`,
+`bot_policy` set and no `profile_id`, it is seated as `isBot: true` in the room
+state, and the catalogue says so too.
+
+How a bot picks a shot (`src/engines/carrom/bots.ts`):
+
+1. **Ghost-ball candidates.** For every coin of its own colour and both pockets it
+   computes the contact position behind the coin (a straight pot), and adds one
+   one-cushion bank per pocket, mirroring the pocket through the simplest wall.
+   Candidates whose striker placement would sit off the baseline or be blocked are
+   dropped, and cut angles above ~80 degrees are refused as unrealistic.
+2. **Scoring.** Each candidate is scored by cut angle, by the distance the coin has
+   to travel and by whether anything sits on the coin's line to the pocket. The
+   queen is worth taking when it is the bot's to take.
+3. **Selection.** Candidates are chosen by softmax over their scores with
+   `selectionQuality` as the temperature, so a stronger bot almost always takes
+   the best shot it found and a weaker one sometimes takes the second best.
+4. **Execution error.** The chosen angle gets gaussian noise scaled by
+   `aimErrorDegrees`, and the power gets gaussian noise scaled by
+   `1 - powerControl`. Both come from the match RNG, so a bot shot is reproducible
+   from the seed like any other.
+
+The fallback is `safeShot()`: a gentle straight shot to the baseline used for a
+timeout, so a slow player never stalls the match.
+
+How to test it: `npm test -- tests/carrom/bots.test.ts`. It checks that every
+published number is in range, that a bot never proposes an illegal shot over a
+few hundred positions, that a straight pot in front of a pocket is found, that a
+weaker bot misses more often than a stronger one over many seeds, and that the
+same seed and state produce the same shot.
+
+Next: recording a match so the result can be checked afterwards.

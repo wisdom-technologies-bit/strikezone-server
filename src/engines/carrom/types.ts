@@ -2,7 +2,7 @@
 // and shot interface only. This code is original: no line is copied, translated
 // or paraphrased from that project. See docs/carrom-rules.md.
 
-import type { SeededRng } from "../../lib/fair-rng.js";
+import type { UniformRng } from "../../lib/fair-rng.js";
 import type { CarromConfig } from "./config.js";
 
 /** A player's colour. White breaks, black answers. */
@@ -201,7 +201,7 @@ export interface BotPolicy {
   readonly id: string;
   chooseShot(
     state: CarromState,
-    rng: SeededRng,
+    rng: UniformRng,
     skill: BotSkill,
     config?: CarromConfig,
   ): CarromShot;
