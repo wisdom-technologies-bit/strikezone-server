@@ -28,7 +28,8 @@
     "odds:validate": "tsx scripts/odds-validate.ts",
     "odds:fit": "tsx scripts/odds-fit.ts",
     "odds:verify": "tsx scripts/odds-verify.ts",
-    "odds:backtest": "tsx scripts/odds-backtest.ts"
+    "odds:backtest": "tsx scripts/odds-backtest.ts",
+    "money:demo": "tsx scripts/money-demo.ts"
   },
   "dependencies": {
     "@colyseus/monitor": "^0.18.7",

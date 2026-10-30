@@ -57,6 +57,7 @@ Copy .env.example to .env and fill in every value (see README.md).
 | `npm run odds:validate`            | Fast odds model against the real engine            |
 | `npm run odds:backtest`            | Score the model against finished matches           |
 | `npm run tournament:demo`          | Create, play out and print a whole tournament      |
+| `npm run money:demo`               | Top up, bet, settle and reconcile, in memory       |
 
 ## Environment variables
 
@@ -251,10 +252,19 @@ and the hold against what they should contain. Every one must be zero, and the
 **Verifying it.**
 
 ```bash
+npm run money:demo             # the whole lifecycle, and the reports, in one run
 supabase/tests/run.sh          # migrations, schema checks, 14 money checks
 supabase/tests/concurrency.sh  # 100 simultaneous bets against the cap
 npm test                       # 252 unit and route tests
 ```
+
+`money:demo` is the DONE WHEN in one command: it tops up the bankroll through
+`POST /api/admin/bankroll/topup`, places three bets through `POST /api/bets`,
+settles the match, refuses the large payout that settlement held, and prints the
+solvency and reconcile reports before and after. It runs against in-memory stores
+so it needs no key and leaves nothing behind; the routes, rules, ledger and
+settlement are the real ones, and the SQL is covered by the two harness scripts
+above.
 
 The concurrency check is the one worth reading: a hundred players bet at once on
 a house with 1,000,000 kobo of free cash, and exactly the number of bets the cap
@@ -774,3 +784,21 @@ the market's id is now `marketRowId`.
 Verified with 14 SQL checks (including solvency and reconcile reporting zero
 differences), a 100-way concurrency storm that accepts exactly the bets the cap
 allows, and 252 unit and route tests.
+
+### The money demo - the DONE WHEN, in one command
+
+`npm run money:demo` runs the whole lifecycle in one process: top up the bankroll
+through the admin route, place three bets through `POST /api/bets`, settle the
+match, refuse the large payout that settlement held back, and print the solvency
+and reconcile reports before and after. It ends with the book balancing: every
+account matches its entries, escrow holds exactly the open stakes, nothing is
+negative, and both reconcile runs report zero differences.
+
+The demo uses in-memory stores so it needs no keys and leaves no rows behind. The
+launcher sets throwaway environment values first, because `src/lib/env.ts`
+validates at import time and refuses to start without them.
+
+Two seams are documented in the file rather than hidden: placement mints the bet
+row (in SQL, `place_bet` escrows the stake inside its own transaction, so the demo
+moves it itself) and settlement takes its verification and stats as fixed answers
+(the real verifier is covered by the settlement tests).
