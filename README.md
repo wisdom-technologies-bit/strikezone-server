@@ -513,9 +513,14 @@ and an advancement rule that takes the top two, which is a schema change (migrat
 the two-seat formats for now, and a Ludo match inside a tournament is a two-player
 one. See `docs/ludo-tournaments.md`.
 
-**What to watch out for.** A bot that waited a second on every forced move made a
-four bot game take four minutes, so the single-legal-move delay applies only to a
-human. And the log's turn entries are appended as they happen, chained one at a
+**What to watch out for.** The browser client takes the *origin* as its endpoint
+(`new Client("ws://host")`), not the socket path: the SDK appends `matchmake/...` to
+whatever path it is given and the matchmaker is mounted at the root, so
+`ws://host/colyseus` answers 404 to every join. Both dev pages had that bug and both
+are fixed; the room's socket URL comes back in the seat reservation anyway.
+
+A bot that waited a second on every forced move made a four bot game take four
+minutes, so the single-legal-move delay applies only to a human. And the log's turn entries are appended as they happen, chained one at a
 time: a result entry written by the same `await` chain cannot race them, which is
 what makes the replay trustworthy in the first place.
 

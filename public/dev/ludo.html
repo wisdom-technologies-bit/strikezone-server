@@ -459,7 +459,10 @@
         const module = await import(CLIENT_URL);
         const Client = module.Client ?? module.default?.Client;
         const protocol = location.protocol === "https:" ? "wss" : "ws";
-        const client = new Client(`${protocol}://${location.host}/colyseus`);
+        // The endpoint is the origin, not the socket path: the SDK appends
+        // "matchmake/..." to whatever path it is given, and the matchmaker is at the
+        // root. The room's socket URL comes back in the seat reservation.
+        const client = new Client(`${protocol}://${location.host}`);
 
         document.getElementById("status").textContent = `joining ${roomId}`;
         room = await client.joinById(roomId, { spectate: true });
