@@ -4,7 +4,11 @@ import type { MatchRepository } from "../lib/match-repository.js";
 import { matchRepository } from "../lib/match-store.js";
 import { computeMatchStats } from "./stats.js";
 import { priceMatch } from "./pricer.js";
+import { priceLudoMatch } from "./ludo-pricer.js";
+import { computeLudoStats, replayLudoLog } from "./ludo-stats.js";
+import type { LudoState } from "../engines/ludo/index.js";
 import { LIVE_SIMULATIONS, REPRICE_INTERVAL_MS, SUSPENSION_MS } from "./config.js";
+import { LUDO_PRICE_BUDGET_MS as LUDO_PREMATCH_BUDGET_MS } from "./ludo-pricer.js";
 import { marketsRepository, type MarketsRepository } from "./markets-store.js";
 
 /**
@@ -46,7 +50,22 @@ export interface OddsEngine {
   idle(): Promise<void>;
 }
 
-type CarromGame = "carrom" | "ludo";
+type Game = "carrom" | "ludo";
+
+/**
+ * A log entry's payload, whichever field the repository puts it in.
+ *
+ * The Ludo replay reads `{ type, payload }`, and this is the one place that
+ * touches a stored entry's shape: everything downstream reads the engine's own
+ * log type.
+ */
+function payloadOf(entry: {
+  readonly payload?: unknown;
+  readonly data?: unknown;
+}): Record<string, unknown> {
+  const value = entry.payload ?? entry.data;
+  return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+}
 
 const defaultClock = {
   setTimeout(callback: () => void, delayMs: number): { cancel: () => void } {
@@ -68,7 +87,7 @@ export function attachOddsEngine(options: OddsEngineOptions = {}): OddsEngine {
   const clock = options.clock ?? defaultClock;
 
   const lastPriceAt = new Map<string, number>();
-  const pending = new Map<string, { shotNumber: number; at: number }>();
+  const pending = new Map<string, { shotNumber: number; at: number; game: Game }>();
   const suspensions = new Map<string, { cancel: () => void }>();
   /**
    * Matches that are over. A shot's reprice reopens the book two seconds later,
@@ -115,7 +134,63 @@ export function attachOddsEngine(options: OddsEngineOptions = {}): OddsEngine {
     suspensions.set(matchId, suspension);
   };
 
-  const reprice = (matchId: string, shotNumber: number, game: CarromGame): void => {
+  /**
+   * The board a Ludo match has reached, or undefined when it cannot be read.
+   *
+   * A live price resumes from here, which is the whole point of pricing in play:
+   * a seat with three tokens home must not be priced as if the game had not
+   * started. A log that will not replay is not a reason to keep a stale price, so
+   * the reprice falls back to the opening position and says so in the log.
+   */
+  const ludoPosition = async (matchId: string): Promise<LudoState | undefined> => {
+    try {
+      const entries = await matches.listEvents(matchId);
+      const replay = replayLudoLog(
+        entries.map((entry) => ({ type: entry.type, payload: payloadOf(entry) })),
+      );
+      return replay.state.status === "playing" ? replay.state : undefined;
+    } catch (error) {
+      logger.warn(
+        { matchId, err: error },
+        "could not read the ludo position: pricing from the opening",
+      );
+      return undefined;
+    }
+  };
+
+  /** One repricing, by the game that owns the book. */
+  const price = async (
+    matchId: string,
+    game: Game,
+    options: {
+      readonly live: boolean;
+      readonly status: "open" | "suspended";
+      readonly seed: string;
+    },
+  ): Promise<void> => {
+    if (game === "ludo") {
+      const resume = options.live ? await ludoPosition(matchId) : undefined;
+      await priceLudoMatch(matchId, {
+        repository,
+        matches,
+        simulations,
+        status: options.status,
+        seed: options.seed,
+        ...(resume === undefined ? {} : { resume }),
+      });
+      return;
+    }
+
+    await priceMatch(matchId, {
+      simulations,
+      repository,
+      matches,
+      status: options.status,
+      seedPrefix: options.seed,
+    });
+  };
+
+  const reprice = (matchId: string, shotNumber: number, game: Game): void => {
     if (stopped || finishedMatches.has(matchId)) {
       return;
     }
@@ -125,7 +200,7 @@ export function attachOddsEngine(options: OddsEngineOptions = {}): OddsEngine {
 
     if (startedAt - last < repriceIntervalMs) {
       // Remember the newest shot, and reprice once the second is up.
-      pending.set(matchId, { shotNumber, at: startedAt });
+      pending.set(matchId, { shotNumber, at: startedAt, game });
       return;
     }
 
@@ -134,12 +209,10 @@ export function attachOddsEngine(options: OddsEngineOptions = {}): OddsEngine {
     const job = (async () => {
       try {
         await repository.setStatus(matchId, "suspended");
-        await priceMatch(matchId, {
-          simulations,
-          repository,
-          matches,
+        await price(matchId, game, {
+          live: true,
           status: "suspended",
-          seedPrefix: `${matchId}:live`,
+          seed: `${matchId}:live`,
         });
         logger.debug({ matchId, shotNumber, game }, "repriced in play");
       } catch (error) {
@@ -170,7 +243,7 @@ export function attachOddsEngine(options: OddsEngineOptions = {}): OddsEngine {
       return;
     }
     pending.delete(matchId);
-    reprice(matchId, queued.shotNumber, "carrom");
+    reprice(matchId, queued.shotNumber, queued.game);
   };
 
   const ticker = setInterval(() => {
@@ -182,11 +255,26 @@ export function attachOddsEngine(options: OddsEngineOptions = {}): OddsEngine {
 
   unsubscribes.push(
     subscribe("match.created", (payload) => {
-      const job = priceMatch(payload.matchId, {
-        repository,
-        matches,
-        ...(preMatchSimulations === undefined ? {} : { simulations: preMatchSimulations }),
-      }).then(
+      const job = (async () => {
+        const match = await matches.get(payload.matchId);
+        const game: Game = match?.game === "ludo" ? "ludo" : "carrom";
+        if (game === "ludo") {
+          // A Ludo price is a million games unless the budget says otherwise, and
+          // the pricer decides that itself.
+          await priceLudoMatch(payload.matchId, {
+            repository,
+            matches,
+            ...(preMatchSimulations === undefined ? {} : { simulations: preMatchSimulations }),
+            ...(preMatchSimulations === undefined ? { budgetMs: LUDO_PREMATCH_BUDGET_MS } : {}),
+          });
+          return;
+        }
+        await priceMatch(payload.matchId, {
+          repository,
+          matches,
+          ...(preMatchSimulations === undefined ? {} : { simulations: preMatchSimulations }),
+        });
+      })().then(
         () => {
           logger.info({ matchId: payload.matchId }, "priced a new match");
         },
@@ -232,8 +320,26 @@ export function attachOddsEngine(options: OddsEngineOptions = {}): OddsEngine {
         try {
           await Promise.all([...inFlight]);
           const events = await matches.listEvents(payload.matchId);
-          const stats = computeMatchStats(payload.matchId, events);
           await repository.setStatus(payload.matchId, "closed");
+
+          if (payload.game === "ludo") {
+            const ludo = computeLudoStats(
+              events.map((entry) => ({ type: entry.type, payload: payloadOf(entry) })),
+            );
+            await publish("markets.ready_to_settle", {
+              matchId: payload.matchId,
+              game: "ludo",
+              winner: ludo.winnerSeat,
+              boardsPlayed: 0,
+              totalPoints: 0,
+              totalFouls: 0,
+              finishingOrder: ludo.finishingOrder,
+              finalHome: ludo.finalHome,
+            });
+            return;
+          }
+
+          const stats = computeMatchStats(payload.matchId, events);
           await publish("markets.ready_to_settle", {
             matchId: payload.matchId,
             game: payload.game,

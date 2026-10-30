@@ -405,15 +405,26 @@ const intOf = (payload: Readonly<Record<string, unknown>>, key: string): number 
  * makes, so a match that verifies always produces the stats its bets settle on.
  * A log the engine refuses to replay throws rather than guessing.
  */
-export function computeLudoStats(
+export interface LudoReplay {
+  readonly stats: LudoGameStats;
+  /**
+   * The position the log ends on. Settlement only needs the facts, but a live
+   * reprice needs the board: this is the same replay, so a price computed from
+   * here and a settlement computed from here can never disagree.
+   */
+  readonly state: LudoState;
+  readonly lastRoll: number | null;
+}
+
+/** Replays a match log into the position it ends on, and the facts it proves. */
+export function replayLudoLog(
   entries: readonly LudoLogEntry[],
   options: {
     readonly config?: Partial<LudoConfig>;
     readonly trace?: boolean;
-    /** Set when the room reports the match ended without a winner. */
     readonly abandoned?: boolean;
   } = {},
-): LudoGameStats {
+): LudoReplay {
   const config = resolveLudoConfig(options.config);
   let state = createInitialState(config);
   const builder = new LudoStatsBuilder({ seats: state.seats, trace: options.trace === true });
@@ -464,11 +475,26 @@ export function computeLudoStats(
 
   const winnerSeat = state.status === "finished" ? (state.finishingOrder[0] ?? null) : null;
 
-  return builder.stats({
+  const stats = builder.stats({
     winnerSeat,
     lastRoll,
     abandoned: options.abandoned === true || (winnerSeat === null && options.abandoned !== false),
   });
+
+  return { stats, state, lastRoll };
+}
+
+/** The facts a log proves, without the position. */
+export function computeLudoStats(
+  entries: readonly LudoLogEntry[],
+  options: {
+    readonly config?: Partial<LudoConfig>;
+    readonly trace?: boolean;
+    /** Set when the room reports the match ended without a winner. */
+    readonly abandoned?: boolean;
+  } = {},
+): LudoGameStats {
+  return replayLudoLog(entries, options).stats;
 }
 
 /** True when a seat is in play. */

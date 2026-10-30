@@ -2,8 +2,11 @@ import { subscribe } from "../lib/events.js";
 import { env } from "../lib/env.js";
 import { logger } from "../lib/logger.js";
 import { verifyMatch } from "../lib/match-verify.js";
+import { verifyLudoMatch } from "../lib/match-verify-ludo.js";
 import type { MatchRecord, MatchRepository } from "../lib/match-repository.js";
 import { carromCatalog, type CarromCatalog, type Settlement } from "../odds/catalog/carrom.js";
+import { ludoCatalog } from "../odds/catalog/ludo.js";
+import { replayLudoLog } from "../odds/ludo-stats.js";
 import type { MarketsRepository } from "../odds/markets-store.js";
 import type { Ledger } from "../wallet/ledger.js";
 import { ledger } from "../wallet/ledger.js";
@@ -18,6 +21,7 @@ import {
 } from "./rules.js";
 import type { BetWithMarket } from "./types.js";
 import { computeMatchStats, type MatchStats } from "../odds/stats.js";
+import type { LudoGameStats } from "../odds/ludo-stats.js";
 
 /**
  * Settlement: turning a verified match into decided bets and moved money.
@@ -57,10 +61,24 @@ export interface SettlementDeps {
   readonly verify?: (matchId: string, matches: MatchRepository) => Promise<VerificationOutcome>;
   /** The stats a market settles against. Defaults to the events in the database. */
   readonly stats?: (matchId: string, match: MatchRecord) => Promise<MatchStats>;
+  /** The same seam for a Ludo match, whose facts are a different shape. */
+  readonly ludoStats?: (matchId: string, match: MatchRecord) => Promise<LudoGameStats>;
 }
 
 /** What verification reports. */
 export type VerificationOutcome = Awaited<ReturnType<typeof verifyMatch>>;
+
+/**
+ * A whole-match check as settlement needs it: did it verify, why not, and how
+ * much of it happened. Both verifiers report this, with their own `shots` count
+ * for Carrom and turns for Ludo.
+ */
+function verificationShots(shots: unknown): number {
+  if (typeof shots === "number") {
+    return shots;
+  }
+  return Array.isArray(shots) ? shots.length : 0;
+}
 
 /** What one settlement run did. */
 export interface SettlementReport {
@@ -109,7 +127,6 @@ export async function settleMatch(
 ): Promise<SettlementReport> {
   const bets = deps.bets ?? betsRepository();
   const book = deps.ledger ?? ledger();
-  const catalog = deps.catalog ?? carromCatalog();
   const at = (deps.now ?? (() => new Date()))().toISOString();
   const largePayoutMinor = deps.largePayoutMinor ?? env.LARGE_PAYOUT_MINOR;
   const alert =
@@ -118,11 +135,22 @@ export async function settleMatch(
       logger.error({ matchId, ...context }, message);
     });
 
-  // 1. Verification, before anything else.
+  // 1. Which game, so the right verifier, catalogue and facts are used. A Ludo
+  //    match has four seats and a different log; settling it with Carrom's
+  //    reader would void every market it has.
+  const match = await deps.matches.get(matchId);
+  if (match === null) {
+    return EMPTY_REPORT(matchId, { failure: "no such match" });
+  }
+  const game: "carrom" | "ludo" = match.game === "ludo" ? "ludo" : "carrom";
+
+  // 2. Verification, before anything else.
   const verify =
     deps.verify ??
     ((id: string, matches: MatchRepository) =>
-      verifyMatch(id, matches, { secret: deps.secret ?? env.RESULT_SIGNING_SECRET }));
+      game === "ludo"
+        ? verifyLudoMatch(match, matches, { secret: deps.secret ?? env.RESULT_SIGNING_SECRET })
+        : verifyMatch(id, matches, { secret: deps.secret ?? env.RESULT_SIGNING_SECRET }));
 
   const verification = await verify(matchId, deps.matches);
 
@@ -133,18 +161,10 @@ export async function settleMatch(
     return EMPTY_REPORT(matchId, { failure, flagged: true });
   }
 
-  const match = await deps.matches.get(matchId);
-  if (match === null) {
-    return EMPTY_REPORT(matchId, { verified: true, failure: "no such match" });
-  }
+  const settleBet = await settlementFor(game, matchId, match, deps);
 
-  const stats =
-    deps.stats === undefined
-      ? computeMatchStats(matchId, await deps.matches.listEvents(matchId))
-      : await deps.stats(matchId, match);
-
-  // 2. Which whole-match rule applies, if any.
-  const voidReason = wholeMatchVoidReason(match, verification.shots);
+  // 3. Which whole-match rule applies, if any.
+  const voidReason = wholeMatchVoidReason(match, verificationShots(verification.shots));
   const forfeit = match.result?.reason === "forfeit";
 
   const openBets = (await bets.listForMatch(matchId)).filter((bet) => bet.status === "open");
@@ -157,7 +177,7 @@ export async function settleMatch(
   let paidMinor = 0;
 
   for (const bet of openBets) {
-    const outcome = decide(bet, { voidReason, forfeit, stats }, catalog);
+    const outcome = decide(bet, { voidReason, forfeit }, settleBet);
     const plan = planSettlement(bet, outcome, largePayoutMinor);
 
     if (plan.hold) {
@@ -222,9 +242,8 @@ function decide(
   context: {
     readonly voidReason: VoidReason;
     readonly forfeit: boolean;
-    readonly stats: MatchStats;
   },
-  catalog: CarromCatalog,
+  settle: (bet: BetWithMarket) => Settlement,
 ): Settlement {
   if (context.voidReason !== null) {
     return VOID;
@@ -234,11 +253,58 @@ function decide(
   if (context.forfeit && !settlesOnForfeit(bet.marketType)) {
     return VOID;
   }
-  return catalog.settle(
-    { marketType: bet.marketType, subject: bet.subject, line: bet.line },
-    bet.selectionKey,
-    context.stats,
-  );
+  return settle(bet);
+}
+
+/**
+ * How one bet of this game is decided.
+ *
+ * Both catalogues share a `settle(market, selection, stats)` shape but not a
+ * stats type, so the game's reader is bound here once and the loop below stays
+ * unaware of which game it is settling.
+ */
+async function settlementFor(
+  game: "carrom" | "ludo",
+  matchId: string,
+  match: MatchRecord,
+  deps: SettlementDeps,
+): Promise<(bet: BetWithMarket) => Settlement> {
+  const marketOf = (bet: BetWithMarket) => ({
+    marketType: bet.marketType,
+    subject: bet.subject,
+    line: bet.line,
+  });
+
+  if (game === "ludo") {
+    const catalog = ludoCatalog();
+    const stats =
+      deps.ludoStats === undefined
+        ? replayLudoLog(
+            (await deps.matches.listEvents(matchId)).map((entry) => ({
+              type: entry.type,
+              payload: payloadOf(entry),
+            })),
+            { abandoned: match.result === null },
+          ).stats
+        : await deps.ludoStats(matchId, match);
+    return (bet) => catalog.settle(marketOf(bet), bet.selectionKey, stats);
+  }
+
+  const catalog: CarromCatalog = deps.catalog ?? carromCatalog();
+  const stats =
+    deps.stats === undefined
+      ? computeMatchStats(matchId, await deps.matches.listEvents(matchId))
+      : await deps.stats(matchId, match);
+  return (bet) => catalog.settle(marketOf(bet), bet.selectionKey, stats);
+}
+
+/** A stored log entry's payload, whichever field carries it. */
+function payloadOf(entry: {
+  readonly payload?: unknown;
+  readonly data?: unknown;
+}): Record<string, unknown> {
+  const value = entry.payload ?? entry.data;
+  return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
 }
 
 /** The bet status that goes with an outcome that needs no review. */

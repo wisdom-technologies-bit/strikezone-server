@@ -1,8 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import {
-  InMemoryBetsRepository,
-  type BetsRepository,
-} from "../../src/betting/bets-store.js";
+import { InMemoryBetsRepository, type BetsRepository } from "../../src/betting/bets-store.js";
 import { settleMatch } from "../../src/betting/settle.js";
 import type { BetRow } from "../../src/betting/types.js";
 import { InMemoryMatchRepository } from "../../src/lib/match-repository.js";
@@ -10,6 +7,7 @@ import { InMemoryMarketsRepository, type MarketRow } from "../../src/odds/market
 import type { MatchStats } from "../../src/odds/stats.js";
 import { InMemoryLedger } from "../../src/wallet/ledger.js";
 import { finishedMatch, shortMatch } from "../odds/fixtures.js";
+import { seededUniform, simulateLudoGame } from "../../src/odds/ludo-sim.js";
 
 /**
  * Settlement: one verified match, its bets and the money.
@@ -21,7 +19,9 @@ import { finishedMatch, shortMatch } from "../odds/fixtures.js";
 
 const MATCH_ID = "c0000000-0000-4000-8000-00000000m001";
 
-function market(overrides: Partial<MarketRow> & Pick<MarketRow, "marketType" | "selectionKey">): MarketRow {
+function market(
+  overrides: Partial<MarketRow> & Pick<MarketRow, "marketType" | "selectionKey">,
+): MarketRow {
   return {
     matchId: MATCH_ID,
     subject: "",
@@ -240,7 +240,9 @@ describe("settlement", () => {
       ],
     });
 
-    underTest.markets.upsert([market({ matchId: match.id, marketType: "match_winner", selectionKey: "white" })]);
+    underTest.markets.upsert([
+      market({ matchId: match.id, marketType: "match_winner", selectionKey: "white" }),
+    ]);
     underTest.bets.addMarket({
       id: "abandoned-market",
       match_id: match.id,
@@ -264,7 +266,9 @@ describe("settlement", () => {
       ],
     });
 
-    const balanceBefore = await underTest.ledger.balanceOf(await underTest.ledger.userAccount("user-1"));
+    const balanceBefore = await underTest.ledger.balanceOf(
+      await underTest.ledger.userAccount("user-1"),
+    );
     const report = await settleMatch(match.id, {
       ...deps(underTest, shortMatch()),
       verify: (matchId: string) =>
@@ -293,7 +297,12 @@ describe("settlement", () => {
     const winner = stats.winner === "black" ? "black" : "white";
 
     underTest.markets.upsert([
-      market({ matchId: match.id, marketType: "match_winner", selectionKey: winner, oddsDecimal: 10 }),
+      market({
+        matchId: match.id,
+        marketType: "match_winner",
+        selectionKey: winner,
+        oddsDecimal: 10,
+      }),
     ]);
     underTest.bets.addMarket({
       id: "held-market",
@@ -324,7 +333,9 @@ describe("settlement", () => {
       ],
     });
 
-    const balanceBefore = await underTest.ledger.balanceOf(await underTest.ledger.userAccount("user-1"));
+    const balanceBefore = await underTest.ledger.balanceOf(
+      await underTest.ledger.userAccount("user-1"),
+    );
     const report = await settleMatch(match.id, deps(underTest, stats));
 
     expect(report.held).toBe(1);
@@ -403,6 +414,101 @@ describe("settlement", () => {
     expect(second.settled).toBe(0);
     expect(await underTest.ledger.balanceOf(await underTest.ledger.userAccount("user-1"))).toBe(
       balanceAfterFirst,
+    );
+  });
+});
+
+/**
+ * A Ludo bet settles against the Ludo catalogue.
+ *
+ * This is the wiring test: before it, settlement read every match as Carrom, so a
+ * Ludo market had no answer and every bet on one came back void. The seams below
+ * are the verifier and the facts, exactly as the Carrom tests inject them; the
+ * catalogue and the money are the real ones.
+ */
+describe("ludo settlement", () => {
+  /** A finished four bot game that seat 0 (red) won. */
+  function redWins() {
+    const policies = { 0: "cautious", 1: "cautious", 2: "cautious", 3: "cautious" } as const;
+    for (let index = 0; index < 40; index += 1) {
+      const stats = simulateLudoGame({
+        policies,
+        random: seededUniform(`ludo-settle:${String(index)}`),
+      });
+      if (stats.winnerSeat === 0) {
+        return stats;
+      }
+    }
+    throw new Error("no four bot game gave red a win");
+  }
+
+  it("pays a winner-market bet on the seat that won", { timeout: 60_000 }, async () => {
+    const underTest = await book();
+    const match = await underTest.matches.create({
+      game: "ludo",
+      seedCommit: "commit",
+      seats: [
+        { seat: 1, botLevel: "club", botPolicy: "cautious" },
+        { seat: 2, botLevel: "club", botPolicy: "cautious" },
+        { seat: 3, botLevel: "club", botPolicy: "cautious" },
+        { seat: 4, botLevel: "club", botPolicy: "cautious" },
+      ],
+    });
+
+    const stats = redWins();
+    underTest.markets.upsert([
+      market({ matchId: match.id, marketType: "ludo_match_winner", selectionKey: "red" }),
+    ]);
+    underTest.bets.addMarket({
+      id: "red-market",
+      match_id: match.id,
+      market_type: "ludo_match_winner",
+      subject: "",
+      line: null,
+      selection_key: "red",
+    });
+    underTest.bets.addBet(
+      bet({ id: "bet-red", marketId: "red-market", stakeMinor: 10_000 }),
+      "red-market",
+    );
+
+    // Placing the bet moved the stake into escrow; settlement only has to release
+    // it, which is the same shape the Carrom tests use.
+    await underTest.ledger.post({
+      idempotencyKey: "place-bet-red",
+      kind: "bet_stake",
+      refType: "bet",
+      refId: "bet-red",
+      entries: [
+        {
+          accountId: await underTest.ledger.userAccount("user-1"),
+          amountMinor: -10_000,
+        },
+        { accountId: await underTest.ledger.escrowAccount(), amountMinor: 10_000 },
+      ],
+    });
+
+    const report = await settleMatch(match.id, {
+      matches: underTest.matches,
+      markets: underTest.markets,
+      bets: underTest.bets as BetsRepository,
+      ledger: underTest.ledger,
+      largePayoutMinor: 5_000_000,
+      verify: (matchId: string) =>
+        Promise.resolve({ ok: true, matchId, checks: [], failure: null, shots: 200 }),
+      ludoStats: () => Promise.resolve(stats),
+    });
+
+    expect(report.verified).toBe(true);
+    expect(report.voidReason).toBeNull();
+    expect(report.settled).toBe(1);
+    expect(report.won).toBe(1);
+    expect(report.paidMinor).toBe(20_000);
+
+    const settled = await underTest.bets.get("bet-red");
+    expect(settled?.status).toBe("won");
+    expect(await underTest.ledger.balanceOf(await underTest.ledger.userAccount("user-1"))).toBe(
+      5_000_000 - 10_000 + 20_000,
     );
   });
 });

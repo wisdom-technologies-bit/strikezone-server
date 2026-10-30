@@ -109,10 +109,17 @@ export interface MatchFinishedPayload {
 export interface MarketsReadyToSettlePayload {
   readonly matchId: string;
   readonly game: "carrom" | "ludo";
-  readonly winner: "white" | "black" | "tie" | null;
+  /**
+   * Carrom names a colour and can draw; Ludo has four seats and always has a
+   * winner. The number is the seat, 0 to 3, in turn order.
+   */
+  readonly winner: "white" | "black" | "tie" | number | null;
   readonly boardsPlayed: number;
   readonly totalPoints: number;
   readonly totalFouls: number;
+  /** Ludo only: the seats in the order they finished, and the tokens home. */
+  readonly finishingOrder?: readonly number[];
+  readonly finalHome?: readonly number[];
 }
 
 /** Registration opened for a tournament. */

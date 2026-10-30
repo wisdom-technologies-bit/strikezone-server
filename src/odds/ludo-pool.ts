@@ -32,7 +32,7 @@ import {
   seededUniform,
   type LudoPolicyMix,
 } from "./ludo-sim.js";
-import type { LudoBotId, LudoConfig } from "../engines/ludo/index.js";
+import type { LudoBotId, LudoConfig, LudoState } from "../engines/ludo/index.js";
 import type { LudoSimJob, LudoSimResult } from "./ludo-sim-worker.js";
 import type { CatalogMarket } from "./catalog/carrom.js";
 
@@ -44,6 +44,11 @@ export interface LudoBatchRequest {
   readonly config?: Partial<LudoConfig>;
   /** Which markets to count. Defaults to the whole catalogue. */
   readonly markets?: readonly CatalogMarket[];
+  /**
+   * A position to start every game from. A live price resumes from the board as
+   * it stands; a pre-match price leaves this out and starts from the opening.
+   */
+  readonly resume?: LudoState;
   /** Threads to use. Defaults to every core but one, at most eight. */
   readonly threads?: number;
   /** Set false to make a worker failure an error instead of a fallback. */
@@ -80,7 +85,9 @@ export function runInline(job: LudoSimJob): LudoSimResult {
   let abandoned = 0;
 
   for (let index = 0; index < job.games; index += 1) {
-    const stats = runner.play({ random: seededUniform(`${job.seed}:${String(index)}`) });
+    const random = seededUniform(`${job.seed}:${String(index)}`);
+    const stats =
+      job.resume === undefined ? runner.play({ random }) : runner.resume(job.resume, { random });
     if (stats.abandoned) {
       abandoned += 1;
     }
@@ -175,6 +182,7 @@ export async function runLudoBatch(request: LudoBatchRequest): Promise<LudoBatch
     policies: request.policies,
     config: request.config,
     refs,
+    ...(request.resume === undefined ? {} : { resume: request.resume }),
   }));
 
   const url = jobs.length > 1 ? workerUrl() : null;

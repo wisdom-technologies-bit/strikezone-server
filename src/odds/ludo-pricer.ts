@@ -38,7 +38,7 @@ import { runLudoBatch, type LudoBatchResult } from "./ludo-pool.js";
 import { EVEN_POLICY_MIX, type LudoPolicyMix } from "./ludo-sim.js";
 import { policyForSeat } from "./ludo-skill.js";
 import type { CatalogMarket } from "./catalog/carrom.js";
-import type { LudoBotId, LudoConfig } from "../engines/ludo/index.js";
+import type { LudoBotId, LudoConfig, LudoState } from "../engines/ludo/index.js";
 import type { MatchRecord, MatchRepository } from "../lib/match-repository.js";
 
 /** What the brief asks for when there is time. */
@@ -94,6 +94,8 @@ export interface LudoPriceOptions {
   readonly budgetMs?: number;
   /** Threads for the pool. Tests set one. */
   readonly threads?: number;
+  /** A position to price from: a live match resumes where the board is. */
+  readonly resume?: LudoState;
   /** Policies by seat, overriding what the match says. */
   readonly policies?: Readonly<Record<number, LudoBotId | LudoPolicyMix>>;
   readonly config?: Partial<LudoConfig>;
@@ -167,8 +169,15 @@ export async function chooseBatchSize(options: {
   readonly config?: Partial<LudoConfig>;
   readonly threads?: number;
   readonly markets?: readonly CatalogMarket[];
+  readonly resume?: LudoState;
   readonly now: () => number;
 }): Promise<{ readonly games: number; readonly fellBack: boolean; readonly ratePerMs: number }> {
+  // A live reprice plays a few thousand games: there is nothing to calibrate, and
+  // a 20,000 game measurement would cost more than the price it is sizing.
+  if (options.target <= LUDO_CALIBRATION_GAMES) {
+    return { games: options.target, fellBack: false, ratePerMs: 0 };
+  }
+
   const started = options.now();
   const calibration = await runLudoBatch({
     games: LUDO_CALIBRATION_GAMES,
@@ -177,6 +186,7 @@ export async function chooseBatchSize(options: {
     config: options.config,
     markets: options.markets,
     threads: options.threads,
+    ...(options.resume === undefined ? {} : { resume: options.resume }),
   });
   const calibrationMs = Math.max(1, options.now() - started);
   const ratePerMs = calibration.games / calibrationMs;
@@ -233,6 +243,7 @@ export async function priceLudoMatch(
     config: options.config,
     threads: options.threads,
     markets: catalog.markets,
+    resume: options.resume,
     now,
   });
 
@@ -243,6 +254,7 @@ export async function priceLudoMatch(
     config: options.config,
     markets: catalog.markets,
     threads: options.threads,
+    ...(options.resume === undefined ? {} : { resume: options.resume }),
   });
 
   const report = buildPrice({

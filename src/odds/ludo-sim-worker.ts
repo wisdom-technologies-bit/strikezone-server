@@ -17,7 +17,7 @@ import { countGame, countsToObject, type LudoCounts, type SelectionRef } from ".
 import { createLudoGameRunner, seededUniform } from "./ludo-sim.js";
 import type { LudoPolicyMix } from "./ludo-sim.js";
 import type { LudoBotId } from "../engines/ludo/index.js";
-import type { LudoConfig } from "../engines/ludo/index.js";
+import type { LudoConfig, LudoState } from "../engines/ludo/index.js";
 
 /** What the parent asks a worker to do. */
 export interface LudoSimJob {
@@ -26,6 +26,8 @@ export interface LudoSimJob {
   readonly seed: string;
   readonly policies: Readonly<Record<number, LudoBotId | LudoPolicyMix>>;
   readonly config?: Partial<LudoConfig>;
+  /** Start from this position instead of the opening. */
+  readonly resume?: LudoState;
   readonly refs: readonly SelectionRef[];
 }
 
@@ -50,7 +52,9 @@ export function runJob(job: LudoSimJob): LudoSimResult {
   let abandoned = 0;
 
   for (let index = 0; index < job.games; index += 1) {
-    const stats = runner.play({ random: seededUniform(`${job.seed}:${String(index)}`) });
+    const random = seededUniform(`${job.seed}:${String(index)}`);
+    const stats =
+      job.resume === undefined ? runner.play({ random }) : runner.resume(job.resume, { random });
     if (stats.abandoned) {
       abandoned += 1;
     }
