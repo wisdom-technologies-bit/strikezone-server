@@ -844,10 +844,10 @@ export function runnerSeatsFromMatch(match: MatchRecord): RunnerSeat[] {
     .filter((seat: MatchSeat) => seat.seat === 1 || seat.seat === 2)
     .map((seat: MatchSeat) => ({
       seat: seat.seat === 1 ? 1 : 2,
-    playerId: seat.playerId,
-    displayName: seat.displayName,
-    isBot: seat.isBot,
-    botLevel: seat.botLevel,
+      playerId: seat.playerId,
+      displayName: seat.displayName,
+      isBot: seat.isBot,
+      botLevel: seat.botLevel,
       botPolicy: seat.botPolicy,
       skill: seat.skill,
     }));

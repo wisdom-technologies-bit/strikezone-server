@@ -105,8 +105,4 @@ export interface LudoOutcome {
 }
 
 /** A chooser: given the legal moves, pick one. Bots are these. */
-export type LudoChooser = (
-  state: LudoState,
-  roll: number,
-  moves: readonly LudoMove[],
-) => LudoMove;
+export type LudoChooser = (state: LudoState, roll: number, moves: readonly LudoMove[]) => LudoMove;

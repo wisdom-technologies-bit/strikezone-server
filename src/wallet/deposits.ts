@@ -9,11 +9,7 @@ import {
 } from "../betting/limits.js";
 import { ledger, type Ledger } from "./ledger.js";
 import { paymentAdapter } from "./payments.js";
-import {
-  paymentsRepository,
-  type DepositRow,
-  type PaymentsRepository,
-} from "./payments-store.js";
+import { paymentsRepository, type DepositRow, type PaymentsRepository } from "./payments-store.js";
 import { activeProvider, providerByName, type PaymentProvider } from "./providers/index.js";
 
 /**
@@ -57,10 +53,14 @@ export async function startDeposit(
   const payments = deps.payments ?? paymentsRepository();
   const limits = deps.limits ?? limitsRepository();
   const provider =
-    request.provider === undefined ? (deps.provider ?? activeProvider()) : providerByName(request.provider);
+    request.provider === undefined
+      ? (deps.provider ?? activeProvider())
+      : providerByName(request.provider);
 
   if (provider === null) {
-    throw new PlayBlocked("kyc_required", { reason: `no provider named ${String(request.provider)}` });
+    throw new PlayBlocked("kyc_required", {
+      reason: `no provider named ${String(request.provider)}`,
+    });
   }
 
   const at = (deps.now ?? (() => new Date()))();

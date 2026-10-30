@@ -109,7 +109,11 @@ export function buildShotMessage(broadcast: ShotBroadcast): ShotMessage {
 /** The end of a match, with the seed revealed if the server recorded one. */
 export function buildEndMessage(
   result: MatchResult,
-  extras: { readonly matchId: string; readonly seedReveal: string | null; readonly resultSignature: string | null },
+  extras: {
+    readonly matchId: string;
+    readonly seedReveal: string | null;
+    readonly resultSignature: string | null;
+  },
 ): EndMessage {
   return {
     type: "end",

@@ -33,7 +33,8 @@ export const LUDO_BOT_POLICIES: readonly LudoBotPolicy[] = Object.freeze([
     id: "aggressive" as const,
     name: "Bot Aggressive",
     isBot: true as const,
-    description: "Hunts: takes any capture on offer, and only advances when there is nothing to take.",
+    description:
+      "Hunts: takes any capture on offer, and only advances when there is nothing to take.",
   }),
   Object.freeze({
     id: "racer" as const,

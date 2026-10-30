@@ -1,15 +1,15 @@
 import { Client, Room, ServerError } from "colyseus";
 import { z } from "zod";
-import {
-  homeCount,
-  type LudoEvent,
-  type LudoMove,
-  type LudoState,
-} from "../engines/ludo/index.js";
+import { homeCount, type LudoEvent, type LudoMove, type LudoState } from "../engines/ludo/index.js";
 import { ludoRunnerSeatsFromMatch, LudoMatchRunner } from "./ludo-match-runner.js";
 import { ludoConfigFromMatch } from "../lib/ludo-config.js";
 import { LudoRoomState, LudoSeatState, type LudoRoomStateInstance } from "./ludo-room-schema.js";
-import { SpectatorHub, SpectatorRefused, spectatorLimitsFromEnv, type SpectatorLimits } from "./spectators.js";
+import {
+  SpectatorHub,
+  SpectatorRefused,
+  spectatorLimitsFromEnv,
+  type SpectatorLimits,
+} from "./spectators.js";
 import { STREAM_MESSAGES } from "../api/contract.js";
 import { verifyCommit, createMatchSeed } from "../lib/fair-rng.js";
 import { matchRepository } from "../lib/match-store.js";
@@ -409,17 +409,26 @@ export class LudoRoom extends Room<{ state: LudoRoomStateInstance }> {
     const runner = this.#runner;
 
     if (auth === undefined || auth.spectate || auth.seat === null) {
-      client.send(STREAM_MESSAGES.rejected, { code: "spectator", message: "spectators cannot move" });
+      client.send(STREAM_MESSAGES.rejected, {
+        code: "spectator",
+        message: "spectators cannot move",
+      });
       return;
     }
     if (runner === null) {
-      client.send(STREAM_MESSAGES.rejected, { code: "not_started", message: "the match has not started" });
+      client.send(STREAM_MESSAGES.rejected, {
+        code: "not_started",
+        message: "the match has not started",
+      });
       return;
     }
 
     const parsed = ludoMoveMessageSchema.safeParse(raw);
     if (!parsed.success) {
-      client.send(STREAM_MESSAGES.rejected, { code: "invalid_message", message: "send { type: \"move\", tokenIndex }" });
+      client.send(STREAM_MESSAGES.rejected, {
+        code: "invalid_message",
+        message: 'send { type: "move", tokenIndex }',
+      });
       return;
     }
 
@@ -449,7 +458,11 @@ export class LudoRoom extends Room<{ state: LudoRoomStateInstance }> {
   #sendToSeats(type: string, payload: unknown): void {
     for (const client of this.clients) {
       const auth = client.auth as ClientAuth | undefined;
-      if (auth !== undefined && auth.spectate !== true && this.#hub?.has(client.sessionId) !== true) {
+      if (
+        auth !== undefined &&
+        auth.spectate !== true &&
+        this.#hub?.has(client.sessionId) !== true
+      ) {
         client.send(type, payload);
       }
     }

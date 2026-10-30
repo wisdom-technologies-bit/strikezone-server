@@ -305,16 +305,25 @@ export function createPublicRouter(options: PublicRouterOptions = {}): Router {
   });
 
   // A refused read is worth knowing about: it is either a bug or an attack.
-  router.use((error: unknown, request: Parameters<RequestHandler>[0], response: Parameters<RequestHandler>[1], next: Parameters<RequestHandler>[2]) => {
-    logger.warn({ err: error, path: request.path }, "public read failed");
-    void next;
-    response.status(503).json({ ok: false, error: "read_unavailable" });
-  });
+  router.use(
+    (
+      error: unknown,
+      request: Parameters<RequestHandler>[0],
+      response: Parameters<RequestHandler>[1],
+      next: Parameters<RequestHandler>[2],
+    ) => {
+      logger.warn({ err: error, path: request.path }, "public read failed");
+      void next;
+      response.status(503).json({ ok: false, error: "read_unavailable" });
+    },
+  );
 
   return router;
 }
 
 /** Where the cache and the limiter are mounted, for the app and for tests. */
-export function createPublicGuards(options: PublicMiddlewareOptions = {}): readonly RequestHandler[] {
+export function createPublicGuards(
+  options: PublicMiddlewareOptions = {},
+): readonly RequestHandler[] {
   return [createPublicRateLimit(options), createPublicCache(options)];
 }

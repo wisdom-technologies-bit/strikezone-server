@@ -67,10 +67,7 @@ export type VoidReason = "abandoned_before_first_shot" | "walkover" | null;
  * A forfeit is not on this list: it settles the winner market and voids the
  * rest, which is a per-market decision.
  */
-export function wholeMatchVoidReason(
-  match: MatchRecord,
-  shots: number,
-): VoidReason {
+export function wholeMatchVoidReason(match: MatchRecord, shots: number): VoidReason {
   const joined = (seat: 1 | 2): string | null | undefined =>
     seat === 1 ? match.seat1JoinedAt : match.seat2JoinedAt;
   // A ludo match has four seats and is never settled here; only 1 and 2 matter.
@@ -78,9 +75,7 @@ export function wholeMatchVoidReason(
     (seat): seat is MatchSeat & { seat: 1 | 2 } => seat.seat === 1 || seat.seat === 2,
   );
 
-  const walkover = seatsInPlay.some(
-    (seat) => !seat.isBot && (joined(seat.seat) ?? null) === null,
-  );
+  const walkover = seatsInPlay.some((seat) => !seat.isBot && (joined(seat.seat) ?? null) === null);
 
   if (walkover) {
     return "walkover";

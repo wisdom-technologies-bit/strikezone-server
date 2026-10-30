@@ -17,7 +17,12 @@ import {
   type ShotBroadcast,
 } from "./carrom-match-runner.js";
 import { STREAM_MESSAGES } from "../api/contract.js";
-import { SpectatorHub, SpectatorRefused, spectatorLimitsFromEnv, type SpectatorLimits } from "./spectators.js";
+import {
+  SpectatorHub,
+  SpectatorRefused,
+  spectatorLimitsFromEnv,
+  type SpectatorLimits,
+} from "./spectators.js";
 import { buildEndMessage, buildShotMessage, buildSnapshot } from "./stream-messages.js";
 import {
   CarromCoinState,
@@ -316,7 +321,11 @@ export class CarromRoom extends Room<{ state: CarromRoomStateInstance }> {
     logger.info({ matchId: match.id, roomId: this.roomId }, "carrom room created");
   }
 
-  override async onAuth(client: Client, options: unknown, context?: { readonly ip?: string }): Promise<ClientAuth> {
+  override async onAuth(
+    client: Client,
+    options: unknown,
+    context?: { readonly ip?: string },
+  ): Promise<ClientAuth> {
     const parsed = carromRoomOptionsSchema.safeParse(options);
     if (!parsed.success) {
       throw new ServerError(4000, "invalid room options");
@@ -374,10 +383,7 @@ export class CarromRoom extends Room<{ state: CarromRoomStateInstance }> {
         fps: this.#match?.config["framesPerSecond"] ?? 30,
       });
       this.#deliverSnapshot(client);
-      logger.debug(
-        { matchId: this.#match?.id, sessionId: client.sessionId },
-        "spectator joined",
-      );
+      logger.debug({ matchId: this.#match?.id, sessionId: client.sessionId }, "spectator joined");
       return;
     }
 

@@ -61,6 +61,35 @@ const envSchema = z.object({
   MAX_SPECTATORS_PER_ROOM: z.coerce.number().int().min(0).max(50_000).default(2000),
   SPECTATOR_JOIN_PER_MINUTE: z.coerce.number().int().min(1).default(60),
   PUBLIC_API_RATE_PER_MINUTE: z.coerce.number().int().min(1).default(120),
+  /** Requests one IP may make in a minute, over the whole HTTP surface. */
+  GLOBAL_RATE_PER_MINUTE: z.coerce.number().int().min(1).default(600),
+  /** The largest JSON body the server will read, in kilobytes. */
+  BODY_LIMIT_KB: z.coerce.number().int().min(16).max(1024).default(100),
+  /** Wrong admin keys one IP may send before it is locked out. */
+  ADMIN_LOCKOUT_THRESHOLD: z.coerce.number().int().min(1).max(100).default(10),
+  /** How long a locked-out IP stays locked, in milliseconds. */
+  ADMIN_LOCKOUT_MS: z.coerce
+    .number()
+    .int()
+    .min(1_000)
+    .default(15 * 60_000),
+  /** Warn when the free bankroll falls below this, in minor units. */
+  ALERT_FREE_BANKROLL_MINOR: z.coerce.number().int().min(0).default(1_000_000),
+  /** Where alerts are POSTed. Unset means rows only, which is the safe default. */
+  ALERT_WEBHOOK_URL: z
+    .string()
+    .url()
+    .refine(
+      (value) => value.startsWith("http://") || value.startsWith("https://"),
+      "must be an http(s) URL",
+    )
+    .optional(),
+  /** Sentry is optional: without a DSN nothing is sent and nothing is logged. */
+  SENTRY_DSN: z.string().url().optional(),
+  /** The largest Colyseus message a client may send, in bytes. */
+  MAX_MESSAGE_BYTES: z.coerce.number().int().min(256).max(1_048_576).default(4_096),
+  /** Messages one client may send in a second before the room throttles it. */
+  MAX_MESSAGES_PER_SECOND: z.coerce.number().int().min(1).max(1_000).default(20),
 });
 
 export type Env = Readonly<z.infer<typeof envSchema>>;
@@ -108,9 +137,36 @@ function describeIssues(source: NodeJS.ProcessEnv): string[] {
 }
 
 /**
+ * The checks that only apply to a production start.
+ *
+ * These are refusals, not warnings: a production process that comes up with a
+ * short operator key or no result secret is a process that can be taken over or
+ * cannot prove a match. It is better that it never comes up.
+ */
+export function productionProblems(config: {
+  readonly NODE_ENV: string;
+  readonly ADMIN_API_KEY: string;
+  readonly RESULT_SIGNING_SECRET?: string;
+}): string[] {
+  if (config.NODE_ENV !== "production") {
+    return [];
+  }
+
+  const problems: string[] = [];
+  if (config.ADMIN_API_KEY.length < 32) {
+    problems.push("ADMIN_API_KEY must be at least 32 characters in production");
+  }
+  if ((config.RESULT_SIGNING_SECRET ?? "").trim() === "") {
+    problems.push("RESULT_SIGNING_SECRET must be set in production");
+  }
+  return problems;
+}
+
+/**
  * Validates a raw environment and returns a typed, frozen config object.
  *
- * @throws {EnvValidationError} when a required variable is missing or invalid.
+ * @throws {EnvValidationError} when a required variable is missing or invalid,
+ * or when production is about to start with an unsafe configuration.
  */
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
   const issues = describeIssues(source);
@@ -123,6 +179,11 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     throw new EnvValidationError(
       parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`),
     );
+  }
+
+  const unsafe = productionProblems(parsed.data);
+  if (unsafe.length > 0) {
+    throw new EnvValidationError(unsafe);
   }
 
   return Object.freeze(parsed.data);

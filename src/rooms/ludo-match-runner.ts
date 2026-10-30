@@ -156,8 +156,11 @@ export class LudoMatchRunner {
 
   #state: LudoState;
   #moveNumber = 0;
-  #pending: { readonly seat: SeatNumber; readonly roll: number; readonly moves: readonly LudoMove[] } | null =
-    null;
+  #pending: {
+    readonly seat: SeatNumber;
+    readonly roll: number;
+    readonly moves: readonly LudoMove[];
+  } | null = null;
   #cancel: (() => void) | null = null;
   #stopped = false;
   #ended = false;
@@ -207,7 +210,11 @@ export class LudoMatchRunner {
   }
 
   /** The pending roll, while a seat is choosing. */
-  get pending(): { readonly seat: SeatNumber; readonly roll: number; readonly moves: readonly LudoMove[] } | null {
+  get pending(): {
+    readonly seat: SeatNumber;
+    readonly roll: number;
+    readonly moves: readonly LudoMove[];
+  } | null {
     return this.#pending;
   }
 
@@ -341,10 +348,7 @@ export class LudoMatchRunner {
     const count = (this.#timeouts.get(seat) ?? 0) + 1;
     this.#timeouts.set(seat, count);
 
-    this.#deps.logger.warn(
-      { matchId: this.#deps.matchId, seat, count },
-      "ludo move timed out",
-    );
+    this.#deps.logger.warn({ matchId: this.#deps.matchId, seat, count }, "ludo move timed out");
 
     void publish("match.shot", {
       matchId: this.#deps.matchId,
@@ -400,7 +404,10 @@ export class LudoMatchRunner {
     const entry = this.#log.append("timeout_forfeit", { seat, place: finishingOrder.length });
     await this.#persist(result, [entry]);
 
-    this.#deps.hooks?.onEnd?.({ result, state: { ...this.#state, status: "finished", finishingOrder } });
+    this.#deps.hooks?.onEnd?.({
+      result,
+      state: { ...this.#state, status: "finished", finishingOrder },
+    });
   }
 
   /** Total progress of a seat, for ordering seats when a match ends on the clock. */

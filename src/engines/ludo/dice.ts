@@ -36,11 +36,7 @@ const FAST_BLOCK_ROLLS = 4096;
  * `startNonce` exists so a game can be resumed after a restart without replaying
  * the stream it already consumed.
  */
-export function createMatchDice(
-  seed: string,
-  matchId: string,
-  startNonce = 0,
-): DieSource {
+export function createMatchDice(seed: string, matchId: string, startNonce = 0): DieSource {
   let nonce = startNonce;
   let rolls = 0;
 

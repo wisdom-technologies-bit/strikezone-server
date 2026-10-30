@@ -1,8 +1,11 @@
 import { join } from "node:path";
 import express, { type ErrorRequestHandler, type Express } from "express";
 import cors, { type CorsOptions } from "cors";
+import helmet from "helmet";
+import { rateLimit } from "express-rate-limit";
 import { monitor } from "@colyseus/monitor";
 import { createAdminMoneyRouter } from "./api/admin-money.js";
+import { createAdminRouter } from "./api/admin.js";
 import { createAdminTournamentsRouter } from "./api/admin-tournaments.js";
 import { createBetsRouter } from "./api/bets.js";
 import { createPaymentsRouter } from "./api/payments.js";
@@ -16,7 +19,9 @@ import { matchesRouter } from "./api/matches.js";
 import { readyRouter } from "./api/ready.js";
 import { env } from "./lib/env.js";
 import { isOriginAllowed } from "./lib/origins.js";
+import { requestId, requestIdOf } from "./lib/request-id.js";
 import { logger } from "./lib/logger.js";
+import { captureError } from "./monitoring/sentry.js";
 
 /**
  * Builds the Express application.
@@ -28,6 +33,40 @@ export function createApp(): Express {
   const app = express();
 
   app.disable("x-powered-by");
+  // Behind a load balancer the client address is in X-Forwarded-For. Trusting one
+  // hop is what makes the per-address rate limits and the admin lockout mean an
+  // address rather than the balancer's own address.
+  app.set("trust proxy", 1);
+
+  /** A request id first, so every log line and every audit row can carry it. */
+  app.use(requestId);
+
+  /**
+   * Security headers. The cross-origin resource policy is opened to the site's own
+   * origin because the WebSocket endpoint and the API are the same host and a
+   * spectator page legitimately frames nothing: same-origin only.
+   */
+  app.use(
+    helmet({
+      contentSecurityPolicy: false,
+      crossOriginResourcePolicy: { policy: "same-site" },
+    }),
+  );
+
+  /**
+   * A global ceiling per address, before any route does work. The public reads
+   * have their own, tighter limit; this one exists so a single address cannot
+   * occupy the process through a path nobody thought to limit.
+   */
+  app.use(
+    rateLimit({
+      windowMs: 60_000,
+      limit: env.GLOBAL_RATE_PER_MINUTE,
+      standardHeaders: "draft-7",
+      legacyHeaders: false,
+      message: { ok: false, error: "rate_limited" },
+    }),
+  );
 
   /**
    * Origin gate.
@@ -66,7 +105,7 @@ export function createApp(): Express {
    */
   app.use(
     express.json({
-      limit: "100kb",
+      limit: `${String(env.BODY_LIMIT_KB)}kb`,
       verify: (request, _response, buffer) => {
         (request as { rawBody?: string }).rawBody = buffer.toString("utf8");
       },
@@ -89,6 +128,7 @@ export function createApp(): Express {
   app.use(createMarketsRouter());
   app.use(createBetsRouter());
   app.use(createPaymentsRouter());
+  app.use(createAdminRouter());
   app.use(createAdminMoneyRouter());
   app.use(createTournamentsRouter());
   app.use(createAdminTournamentsRouter());
@@ -108,9 +148,11 @@ export function createApp(): Express {
     response.status(404).json({ ok: false, error: "not_found" });
   });
 
-  const errorHandler: ErrorRequestHandler = (error, _request, response, _next) => {
-    logger.error({ err: error }, "unhandled request error");
-    response.status(500).json({ ok: false, error: "internal_error" });
+  const errorHandler: ErrorRequestHandler = (error, request, response, _next) => {
+    const id = requestIdOf(response);
+    logger.error({ err: error, requestId: id, path: request.path }, "unhandled request error");
+    captureError(error);
+    response.status(500).json({ ok: false, error: "internal_error", requestId: id });
   };
   app.use(errorHandler);
 

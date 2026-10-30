@@ -58,7 +58,11 @@ export class ManualProvider implements PaymentProvider {
   }
 
   /** Reads an admin's confirmation of an incoming transfer. */
-  static readConfirmation(body: unknown): { eventId: string; providerRef: string; amountMinor: number } {
+  static readConfirmation(body: unknown): {
+    eventId: string;
+    providerRef: string;
+    amountMinor: number;
+  } {
     return confirmSchema.parse(body);
   }
 }

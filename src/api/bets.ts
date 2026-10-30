@@ -27,40 +27,44 @@ export interface BetsRouterDeps {
 export function createBetsRouter(deps: BetsRouterDeps = {}): Router {
   const router = Router();
 
-  router.post("/api/bets", requireUser({ verifyUser: deps.verifyUser }), (request, response, next) => {
-    const parsed = placeBetRequestSchema.safeParse(request.body);
-    if (!parsed.success) {
-      response.status(400).json({
-        ok: false,
-        error: "invalid_request",
-        issues: parsed.error.issues.map((issue) => ({
-          path: issue.path.join("."),
-          message: issue.message,
-        })),
-      });
-      return;
-    }
-
-    const user = userOf(response);
-
-    void (async () => {
-      try {
-        const placed = await placeBet(user.id, parsed.data);
-        response.status(201).json({
-          ok: true,
-          bet: toBetView(placed),
-          replayed: placed.replayed,
-          balanceMinor: placed.balanceMinor,
+  router.post(
+    "/api/bets",
+    requireUser({ verifyUser: deps.verifyUser }),
+    (request, response, next) => {
+      const parsed = placeBetRequestSchema.safeParse(request.body);
+      if (!parsed.success) {
+        response.status(400).json({
+          ok: false,
+          error: "invalid_request",
+          issues: parsed.error.issues.map((issue) => ({
+            path: issue.path.join("."),
+            message: issue.message,
+          })),
         });
-      } catch (error) {
-        if (error instanceof BetRejected) {
-          response.status(error.status).json({ ok: false, error: error.code, ...error.details });
-          return;
-        }
-        next(error);
+        return;
       }
-    })();
-  });
+
+      const user = userOf(response);
+
+      void (async () => {
+        try {
+          const placed = await placeBet(user.id, parsed.data);
+          response.status(201).json({
+            ok: true,
+            bet: toBetView(placed),
+            replayed: placed.replayed,
+            balanceMinor: placed.balanceMinor,
+          });
+        } catch (error) {
+          if (error instanceof BetRejected) {
+            response.status(error.status).json({ ok: false, error: error.code, ...error.details });
+            return;
+          }
+          next(error);
+        }
+      })();
+    },
+  );
 
   router.post(
     "/api/me/self-exclude",
@@ -85,57 +89,69 @@ export function createBetsRouter(deps: BetsRouterDeps = {}): Router {
     },
   );
 
-  router.get("/api/me/limits", requireUser({ verifyUser: deps.verifyUser }), (_request, response, next) => {
-    const user = userOf(response);
-    void (async () => {
-      try {
-        const row = await limitsRepository().getLimits(user.id);
-        response.json({ ok: true, limits: row.limits, pending: row.pending });
-      } catch (error) {
-        next(error);
-      }
-    })();
-  });
-
-  router.put("/api/me/limits", requireUser({ verifyUser: deps.verifyUser }), (request, response, next) => {
-    const parsed = limitsRequestSchema.safeParse(request.body);
-    if (!parsed.success) {
-      response.status(400).json({
-        ok: false,
-        error: "invalid_request",
-        issues: parsed.error.issues.map((issue) => issue.message),
-      });
-      return;
-    }
-
-    const user = userOf(response);
-
-    void (async () => {
-      try {
-        const result = await updateLimits(user.id, parsed.data, limitsRepository());
-        response.json({ ok: true, ...result });
-      } catch (error) {
-        if (error instanceof PlayBlocked) {
-          response.status(409).json({ ok: false, error: error.code, ...error.details });
-          return;
+  router.get(
+    "/api/me/limits",
+    requireUser({ verifyUser: deps.verifyUser }),
+    (_request, response, next) => {
+      const user = userOf(response);
+      void (async () => {
+        try {
+          const row = await limitsRepository().getLimits(user.id);
+          response.json({ ok: true, limits: row.limits, pending: row.pending });
+        } catch (error) {
+          next(error);
         }
-        next(error);
+      })();
+    },
+  );
+
+  router.put(
+    "/api/me/limits",
+    requireUser({ verifyUser: deps.verifyUser }),
+    (request, response, next) => {
+      const parsed = limitsRequestSchema.safeParse(request.body);
+      if (!parsed.success) {
+        response.status(400).json({
+          ok: false,
+          error: "invalid_request",
+          issues: parsed.error.issues.map((issue) => issue.message),
+        });
+        return;
       }
-    })();
-  });
+
+      const user = userOf(response);
+
+      void (async () => {
+        try {
+          const result = await updateLimits(user.id, parsed.data, limitsRepository());
+          response.json({ ok: true, ...result });
+        } catch (error) {
+          if (error instanceof PlayBlocked) {
+            response.status(409).json({ ok: false, error: error.code, ...error.details });
+            return;
+          }
+          next(error);
+        }
+      })();
+    },
+  );
 
   /** A player's own bets, newest first. */
-  router.get("/api/me/bets", requireUser({ verifyUser: deps.verifyUser }), (_request, response, next) => {
-    const user = userOf(response);
-    void (async () => {
-      try {
-        const bets = await betsRepository().listForPlayer(user.id);
-        response.json({ ok: true, bets });
-      } catch (error) {
-        next(error);
-      }
-    })();
-  });
+  router.get(
+    "/api/me/bets",
+    requireUser({ verifyUser: deps.verifyUser }),
+    (_request, response, next) => {
+      const user = userOf(response);
+      void (async () => {
+        try {
+          const bets = await betsRepository().listForPlayer(user.id);
+          response.json({ ok: true, bets });
+        } catch (error) {
+          next(error);
+        }
+      })();
+    },
+  );
 
   return router;
 }

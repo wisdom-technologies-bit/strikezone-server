@@ -1,4 +1,5 @@
 import { subscribe } from "../lib/events.js";
+import { raiseAlert } from "../monitoring/alerts.js";
 import { env } from "../lib/env.js";
 import { logger } from "../lib/logger.js";
 import { verifyMatch } from "../lib/match-verify.js";
@@ -133,6 +134,15 @@ export async function settleMatch(
     deps.alert ??
     ((message, context) => {
       logger.error({ matchId, ...context }, message);
+      // A settlement that fails is money the book owes and has not paid: it is
+      // written to the alerts table as well as the log, so it outlives the log.
+      void raiseAlert({
+        code: "settlement_failed",
+        severity: "critical",
+        message,
+        context: { ...context, game: match?.game ?? "unknown" },
+        matchId,
+      });
     });
 
   // 1. Which game, so the right verifier, catalogue and facts are used. A Ludo

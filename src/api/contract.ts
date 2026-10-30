@@ -32,13 +32,7 @@ export type Timestamp = z.infer<typeof timestampSchema>;
 export const moneyModeSchema = z.enum(["virtual", "real"]);
 export type MoneyMode = z.infer<typeof moneyModeSchema>;
 
-export const matchStatusSchema = z.enum([
-  "scheduled",
-  "live",
-  "finished",
-  "void",
-  "abandoned",
-]);
+export const matchStatusSchema = z.enum(["scheduled", "live", "finished", "void", "abandoned"]);
 export type MatchStatus = z.infer<typeof matchStatusSchema>;
 
 export const botLevelSchema = z.enum(["rookie", "club", "master"]);
@@ -51,9 +45,7 @@ export const errorSchema = z.object({
   /** Present when the failure names a limit that was hit. */
   limit: z.string().nullish(),
   /** Present on a validation failure: which field, and why. */
-  issues: z
-    .array(z.object({ path: z.string(), message: z.string() }))
-    .nullish(),
+  issues: z.array(z.object({ path: z.string(), message: z.string() })).nullish(),
 });
 export type ApiError = z.infer<typeof errorSchema>;
 
@@ -133,8 +125,7 @@ export interface DecodedFrames {
 }
 
 /** The 64-character alphabet base64 uses, without relying on any global. */
-const BASE64 =
-  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+const BASE64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 const BASE64_INDEX: ReadonlyMap<string, number> = new Map(
   [...BASE64].map((character, index) => [character, index]),

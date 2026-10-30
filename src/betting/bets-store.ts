@@ -192,7 +192,9 @@ export class SupabaseBetsRepository implements BetsRepository {
   async listForMatch(matchId: string): Promise<BetWithMarket[]> {
     const result = await this.#client
       .from("bets")
-      .select(`${BET_COLUMNS}, markets!inner (id, match_id, market_type, subject, line, selection_key)`)
+      .select(
+        `${BET_COLUMNS}, markets!inner (id, match_id, market_type, subject, line, selection_key)`,
+      )
       .eq("markets.match_id", matchId)
       .in("status", ["open", "pending_review"])
       .returns<(BetRowShape & { markets: MarketShape })[]>();
@@ -210,7 +212,9 @@ export class SupabaseBetsRepository implements BetsRepository {
   async listPendingReview(): Promise<BetWithMarket[]> {
     const result = await this.#client
       .from("bets")
-      .select(`${BET_COLUMNS}, markets!inner (id, match_id, market_type, subject, line, selection_key)`)
+      .select(
+        `${BET_COLUMNS}, markets!inner (id, match_id, market_type, subject, line, selection_key)`,
+      )
       .eq("status", "pending_review")
       .order("settled_at", { ascending: true })
       .returns<(BetRowShape & { markets: MarketShape })[]>();

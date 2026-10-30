@@ -143,9 +143,4 @@ export function createPaymentsRouter(deps: PaymentsRouterDeps = {}): Router {
 }
 
 /** Admin-only withdrawal decisions live with the other admin money routes. */
-export {
-  approveWithdrawal,
-  markWithdrawalPaid,
-  rejectWithdrawal,
-  withdrawalDecisionSchema,
-};
+export { approveWithdrawal, markWithdrawalPaid, rejectWithdrawal, withdrawalDecisionSchema };

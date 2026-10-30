@@ -255,8 +255,7 @@ export class LudoSimulator {
           continue;
         }
         const opponentCell = (otherStart + progress) % LUDO_GEOMETRY.ringCells;
-        const gap =
-          (cell - opponentCell + LUDO_GEOMETRY.ringCells) % LUDO_GEOMETRY.ringCells;
+        const gap = (cell - opponentCell + LUDO_GEOMETRY.ringCells) % LUDO_GEOMETRY.ringCells;
         if (gap >= 1 && gap <= DANGER_RANGE) {
           return true;
         }
@@ -546,7 +545,8 @@ export class LudoSimulator {
             continue;
           }
           for (let index = 0; index < this.#config.tokensPerPlayer; index += 1) {
-            const progress = (this.#progress[other * this.#config.tokensPerPlayer + index] ?? 1) - 1;
+            const progress =
+              (this.#progress[other * this.#config.tokensPerPlayer + index] ?? 1) - 1;
             if (progress < 0 || progress > LUDO_GEOMETRY.ringSteps - 1) {
               continue;
             }

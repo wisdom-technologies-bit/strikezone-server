@@ -53,4 +53,10 @@ export {
   isCellDangerous,
   racerChooser,
 } from "./bots.js";
-export { LUDO_BOT_IDS, LUDO_BOT_POLICIES, ludoBot, type LudoBotId, type LudoBotPolicy } from "./bot-config.js";
+export {
+  LUDO_BOT_IDS,
+  LUDO_BOT_POLICIES,
+  ludoBot,
+  type LudoBotId,
+  type LudoBotPolicy,
+} from "./bot-config.js";

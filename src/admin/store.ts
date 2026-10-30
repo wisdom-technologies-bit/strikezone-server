@@ -163,7 +163,9 @@ export class SupabaseAdminStore implements AdminStore {
         house_funds_minor: input.houseFundsMinor,
         note: input.note,
       })
-      .select("id, cash_reported_minor, user_liabilities_minor, house_funds_minor, note, created_at")
+      .select(
+        "id, cash_reported_minor, user_liabilities_minor, house_funds_minor, note, created_at",
+      )
       .maybeSingle<SnapshotShape>();
 
     if (result.error !== null || result.data === null) {
@@ -177,7 +179,9 @@ export class SupabaseAdminStore implements AdminStore {
   async latestSnapshot(): Promise<SolvencySnapshot | null> {
     const result = await this.#client
       .from("solvency_snapshots")
-      .select("id, cash_reported_minor, user_liabilities_minor, house_funds_minor, note, created_at")
+      .select(
+        "id, cash_reported_minor, user_liabilities_minor, house_funds_minor, note, created_at",
+      )
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle<SnapshotShape>();

@@ -235,7 +235,8 @@ export class SupabasePaymentsRepository implements PaymentsRepository {
       .from("deposits")
       .update({
         status: patch.status,
-        credited_at: patch.status === "credited" ? (patch.creditedAt ?? new Date().toISOString()) : null,
+        credited_at:
+          patch.status === "credited" ? (patch.creditedAt ?? new Date().toISOString()) : null,
       })
       .eq("id", depositId)
       .eq("status", "pending");
@@ -307,10 +308,7 @@ export class SupabasePaymentsRepository implements PaymentsRepository {
       update["reason"] = patch.reason;
     }
 
-    const result = await this.#client
-      .from("withdrawals")
-      .update(update)
-      .eq("id", withdrawalId);
+    const result = await this.#client.from("withdrawals").update(update).eq("id", withdrawalId);
 
     if (result.error !== null) {
       throw new PaymentsRepositoryError(`could not update the withdrawal: ${result.error.message}`);
@@ -364,9 +362,7 @@ export class SupabasePaymentsRepository implements PaymentsRepository {
       if (result.error.code === "23505") {
         return false;
       }
-      throw new PaymentsRepositoryError(
-        `could not record the webhook: ${result.error.message}`,
-      );
+      throw new PaymentsRepositoryError(`could not record the webhook: ${result.error.message}`);
     }
     return true;
   }
@@ -435,7 +431,8 @@ export class InMemoryPaymentsRepository implements PaymentsRepository {
     this.#deposits.set(depositId, {
       ...row,
       status: patch.status,
-      creditedAt: patch.status === "credited" ? (patch.creditedAt ?? new Date().toISOString()) : null,
+      creditedAt:
+        patch.status === "credited" ? (patch.creditedAt ?? new Date().toISOString()) : null,
     });
     return Promise.resolve();
   }
@@ -494,9 +491,7 @@ export class InMemoryPaymentsRepository implements PaymentsRepository {
   }
 
   listWithdrawals(userId: string): Promise<WithdrawalRow[]> {
-    return Promise.resolve(
-      [...this.#withdrawals.values()].filter((row) => row.userId === userId),
-    );
+    return Promise.resolve([...this.#withdrawals.values()].filter((row) => row.userId === userId));
   }
 
   listOpenWithdrawals(): Promise<WithdrawalRow[]> {

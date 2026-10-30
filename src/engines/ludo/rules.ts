@@ -343,7 +343,9 @@ export function applyMove(state: LudoState, move: LudoMove): LudoOutcome {
     throw new Error("the game is over");
   }
   if (move.seat !== seatToPlay(state)) {
-    throw new Error(`seat ${String(move.seat)} cannot move: it is seat ${String(seatToPlay(state))}'s turn`);
+    throw new Error(
+      `seat ${String(move.seat)} cannot move: it is seat ${String(seatToPlay(state))}'s turn`,
+    );
   }
   if (!isLegalMove(state, move)) {
     throw new Error(
@@ -414,12 +416,18 @@ export function applyMove(state: LudoState, move: LudoMove): LudoOutcome {
   // A player who has just brought the last token home does not roll again: the
   // turn belongs to the next player even if the roll would have earned one.
   const seatFinishedNow = finishingOrder.length > state.finishingOrder.length;
-  const turn = seatFinishedNow || !earnedExtra
-    ? advanceTurn(state.seats, state.turn, { ...state, tokens })
-    : state.turn;
+  const turn =
+    seatFinishedNow || !earnedExtra
+      ? advanceTurn(state.seats, state.turn, { ...state, tokens })
+      : state.turn;
 
   if (turn === state.turn) {
-    events.push({ type: "extra_roll", seat, roll, reason: finishedToken ? "token_home" : capturedSomething ? "capture" : "six" });
+    events.push({
+      type: "extra_roll",
+      seat,
+      roll,
+      reason: finishedToken ? "token_home" : capturedSomething ? "capture" : "six",
+    });
   } else {
     events.push({ type: "turn_changed", seat: state.seats[turn] ?? 0 });
   }
@@ -483,11 +491,7 @@ export function forfeitTurn(state: LudoState, roll: number, reason: string): Lud
 
 /** True when this roll, by this player, is their third six in a row. */
 export function shouldForfeitTripleSix(state: LudoState, roll: number): boolean {
-  return (
-    state.config.tripleSixForfeit &&
-    roll === state.config.diceSides &&
-    state.sixes === 2
-  );
+  return state.config.tripleSixForfeit && roll === state.config.diceSides && state.sixes === 2;
 }
 
 /**
@@ -499,7 +503,9 @@ export function shouldForfeitTripleSix(state: LudoState, roll: number): boolean 
  */
 export function applyRoll(state: LudoState, roll: number, choose: LudoChooser): LudoOutcome {
   if (roll < 1 || roll > state.config.diceSides) {
-    throw new RangeError(`roll must be 1 to ${String(state.config.diceSides)}, got ${String(roll)}`);
+    throw new RangeError(
+      `roll must be 1 to ${String(state.config.diceSides)}, got ${String(roll)}`,
+    );
   }
   if (state.status === "finished") {
     throw new Error("the game is over");

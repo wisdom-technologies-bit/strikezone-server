@@ -84,7 +84,12 @@ export async function verifyLudoMatch(
   const events = await repository.listEvents(matchId);
   const chain = verifyLogChain(events, seedCommit);
   if (!chain.ok) {
-    return fail({ name: "hash_chain", ok: false, detail: chain.reason, seq: chain.seq ?? undefined });
+    return fail({
+      name: "hash_chain",
+      ok: false,
+      detail: chain.reason,
+      seq: chain.seq ?? undefined,
+    });
   }
   if (match.logHeadHash !== null && match.logHeadHash !== chain.head) {
     return fail({

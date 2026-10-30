@@ -1,4 +1,8 @@
-import { InMemoryBetsRepository, SupabaseBetsRepository, type BetsRepository } from "./bets-store.js";
+import {
+  InMemoryBetsRepository,
+  SupabaseBetsRepository,
+  type BetsRepository,
+} from "./bets-store.js";
 
 /**
  * The bets repository the process uses.

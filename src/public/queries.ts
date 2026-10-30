@@ -91,9 +91,11 @@ interface SeatRow {
   readonly match_id: string;
   readonly seat: number;
   readonly player_id: string;
-  readonly players:
-    | { readonly display_name: string; readonly kind: "human" | "bot"; readonly bot_policy: string | null }
-    | null;
+  readonly players: {
+    readonly display_name: string;
+    readonly kind: "human" | "bot";
+    readonly bot_policy: string | null;
+  } | null;
 }
 
 const MATCH_COLUMNS =
@@ -115,7 +117,10 @@ function scoresOf(result: Record<string, unknown> | null): { white: number; blac
   return { white, black };
 }
 
-function botLevelOf(kind: "human" | "bot", policy: string | null): "rookie" | "club" | "master" | null {
+function botLevelOf(
+  kind: "human" | "bot",
+  policy: string | null,
+): "rookie" | "club" | "master" | null {
   if (kind !== "bot") {
     return null;
   }
@@ -220,13 +225,21 @@ class SupabasePublicQueries implements PublicQueries {
       matches: page.map((row) => summaryOf(row, seats)),
       nextCursor:
         rows.length > query.limit && last !== undefined
-          ? (kind === "recent" ? last.ended_at : kind === "upcoming" ? last.scheduled_at : last.started_at)
+          ? kind === "recent"
+            ? last.ended_at
+            : kind === "upcoming"
+              ? last.scheduled_at
+              : last.started_at
           : null,
     };
   }
 
   async match(id: string): Promise<MatchDetail | null> {
-    const { data, error } = await supabase.from("matches").select(MATCH_COLUMNS).eq("id", id).maybeSingle();
+    const { data, error } = await supabase
+      .from("matches")
+      .select(MATCH_COLUMNS)
+      .eq("id", id)
+      .maybeSingle();
     if (error !== null) {
       throw new Error(`could not read the match: ${error.message}`);
     }
@@ -333,7 +346,9 @@ class SupabasePublicQueries implements PublicQueries {
   async tournaments(): Promise<readonly TournamentSummary[]> {
     const { data, error } = await supabase
       .from("tournaments")
-      .select("id, name, game, format, status, entry_fee_minor, prize_pool_minor, max_players, starts_at, created_at")
+      .select(
+        "id, name, game, format, status, entry_fee_minor, prize_pool_minor, max_players, starts_at, created_at",
+      )
       .order("starts_at", { ascending: false, nullsFirst: false })
       .limit(50);
 
@@ -361,10 +376,14 @@ class SupabasePublicQueries implements PublicQueries {
       status:
         row.status === "registration"
           ? ("open" as const)
-          : row.status === "draft" || row.status === "running" || row.status === "finished" || row.status === "cancelled"
+          : row.status === "draft" ||
+              row.status === "running" ||
+              row.status === "finished" ||
+              row.status === "cancelled"
             ? (row.status as "draft" | "running" | "finished" | "cancelled")
             : ("draft" as const),
-      format: row.format === "round_robin" ? ("round_robin" as const) : ("single_elimination" as const),
+      format:
+        row.format === "round_robin" ? ("round_robin" as const) : ("single_elimination" as const),
       maxPlayers: row.max_players ?? 16,
       entries: counts.get(row.id) ?? 0,
       entryFeeMinor: row.entry_fee_minor,
@@ -390,12 +409,14 @@ class SupabasePublicQueries implements PublicQueries {
       throw new Error(`could not read entrants: ${error.message}`);
     }
 
-    const entrants = ((data ?? []) as unknown as readonly {
-      player_id: string;
-      seed: number | null;
-      status: string;
-      players: { display_name: string; kind: "human" | "bot" } | null;
-    }[]).map((row) => ({
+    const entrants = (
+      (data ?? []) as unknown as readonly {
+        player_id: string;
+        seed: number | null;
+        status: string;
+        players: { display_name: string; kind: "human" | "bot" } | null;
+      }[]
+    ).map((row) => ({
       playerId: row.player_id,
       displayName: row.players?.display_name ?? "Unknown",
       isBot: row.players?.kind === "bot",
@@ -466,7 +487,9 @@ class SupabasePublicQueries implements PublicQueries {
 
     let builder = supabase
       .from("ledger_entries")
-      .select("id, amount_minor, created_at, transaction_id, ledger_transactions(kind, ref_type, ref_id)")
+      .select(
+        "id, amount_minor, created_at, transaction_id, ledger_transactions(kind, ref_type, ref_id)",
+      )
       .eq("account_id", accountId)
       .order("created_at", { ascending: false })
       .limit(query.limit + 1);
@@ -554,7 +577,9 @@ class SupabasePublicQueries implements PublicQueries {
   async #recentResults(playerId: string): Promise<PlayerProfile["recentResults"]> {
     const { data, error } = await supabase
       .from("match_players")
-      .select("match_id, seat, matches(id, status, ended_at, result, match_players(seat, players(display_name)))")
+      .select(
+        "match_id, seat, matches(id, status, ended_at, result, match_players(seat, players(display_name)))",
+      )
       .eq("player_id", playerId)
       .limit(10);
 
@@ -576,7 +601,12 @@ class SupabasePublicQueries implements PublicQueries {
     };
 
     return ((data ?? []) as unknown as readonly Joined[])
-      .filter((row) => row.matches !== null && row.matches.status === "finished" && row.matches.ended_at !== null)
+      .filter(
+        (row) =>
+          row.matches !== null &&
+          row.matches.status === "finished" &&
+          row.matches.ended_at !== null,
+      )
       .map((row) => {
         const match = row.matches;
         const winnerSeat = match?.result?.["winnerSeat"];

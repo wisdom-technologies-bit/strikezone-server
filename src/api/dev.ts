@@ -45,12 +45,10 @@ const LUDO_POLICY_IDS = LUDO_BOT_POLICIES.map((policy) => policy.id);
  */
 export const startLudoSchema = z
   .object({
-    policies: z.array(z.enum(LUDO_POLICY_IDS)).length(4).default([
-      "cautious",
-      "aggressive",
-      "racer",
-      "cautious",
-    ]),
+    policies: z
+      .array(z.enum(LUDO_POLICY_IDS))
+      .length(4)
+      .default(["cautious", "aggressive", "racer", "cautious"]),
     allowSpectators: z.boolean().default(true),
   })
   .strict();

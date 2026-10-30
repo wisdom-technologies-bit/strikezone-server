@@ -51,7 +51,11 @@ export type LimitsRequest = z.infer<typeof limitsRequestSchema>;
 export const selfExclusionRequestSchema = z
   .strictObject({
     /** How long the exclusion runs, in hours. One to 8,760. */
-    hours: z.number().int().min(1).max(MAX_EXCLUSION_DAYS * 24),
+    hours: z
+      .number()
+      .int()
+      .min(1)
+      .max(MAX_EXCLUSION_DAYS * 24),
     /** self_exclusion is the full block; cool_off is the same block, short. */
     kind: z.enum(["self_exclusion", "cool_off"]).default("self_exclusion"),
   })
@@ -345,7 +349,8 @@ export class SupabaseLimitsRepository implements LimitsRepository {
 
     return {
       selfExcludedUntil: result.data.self_excluded_until,
-      selfExclusionKind: (result.data.self_exclusion_kind ?? null) as PlayState["selfExclusionKind"],
+      selfExclusionKind: (result.data.self_exclusion_kind ??
+        null) as PlayState["selfExclusionKind"],
       kycStatus: result.data.kyc_status,
       accountCreatedAt: result.data.created_at,
     };

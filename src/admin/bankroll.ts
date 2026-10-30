@@ -201,9 +201,9 @@ export async function recordSnapshot(
 }
 
 /** The accounting invariants, as the database computes them. */
-export async function reconcile(deps: AdminDeps = {}): Promise<
-  ReconcileNumbers & { readonly clean: boolean }
-> {
+export async function reconcile(
+  deps: AdminDeps = {},
+): Promise<ReconcileNumbers & { readonly clean: boolean }> {
   const reports = deps.reports ?? reportsSource();
   const numbers = await reports.reconcile(ledgerCurrency());
   return { ...numbers, clean: reconcileClean(numbers) };

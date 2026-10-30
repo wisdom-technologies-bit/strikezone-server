@@ -59,7 +59,10 @@ export interface PaymentProvider {
   readonly manual: boolean;
   createDepositIntent(input: DepositIntentInput): Promise<DepositIntent>;
   /** Verifies a webhook's signature and reads its meaning. */
-  verifyWebhook(headers: Readonly<Record<string, string | undefined>>, body: string): WebhookVerdict;
+  verifyWebhook(
+    headers: Readonly<Record<string, string | undefined>>,
+    body: string,
+  ): WebhookVerdict;
   createPayout(input: PayoutRequest): Promise<PayoutResult>;
 }
 
