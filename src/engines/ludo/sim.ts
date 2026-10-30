@@ -39,6 +39,13 @@ const YARD_STORED = 0;
 export interface SimTurnResult {
   /** Tokens captured this turn. */
   readonly captures: number;
+  /**
+   * Which seats lost a token this turn, as a bitmask: bit `n` is seat `n`.
+   * The odds engine needs to know who captured whom, and a mask costs nothing.
+   */
+  readonly capturedSeatMask: number;
+  /** True when the moved token left its yard on this turn. */
+  readonly entered: boolean;
   /** True when a token reached home. */
   readonly broughtHome: boolean;
   /** True when the seat rolled a third six and lost the turn. */
@@ -72,6 +79,8 @@ export class LudoSimulator {
   #rolls = 0;
   #finishedSeats = 0;
   #status: "playing" | "finished" = "playing";
+  /** Which seats lost a token in the capture just applied, as a bitmask. */
+  #lastCaptureMask = 0;
 
   constructor(options: { readonly config?: Partial<LudoConfig>; readonly policy: LudoBotId }) {
     this.#config = resolveLudoConfig(options.config);
@@ -109,8 +118,44 @@ export class LudoSimulator {
     this.#finishingOrder.fill(0);
   }
 
+  /**
+   * Puts the simulator on an existing position.
+   *
+   * The live reprice happens mid-game, so it has to start where the board is,
+   * not from the yard. The snapshot it takes is the room's own `LudoState`, so
+   * nothing here needs a second definition of the game.
+   */
+  loadState(state: LudoState): void {
+    if (state.config.players !== this.#config.players) {
+      throw new RangeError("the position was played with a different number of players");
+    }
+
+    this.#progress.fill(YARD_STORED);
+    for (let index = 0; index < this.#progress.length && index < state.tokens.length; index += 1) {
+      this.#progress[index] = (state.tokens[index] ?? LUDO_YARD) + 1;
+    }
+
+    this.#turn = state.turn;
+    this.#sixes = state.sixes;
+    this.#rolls = state.rolls;
+    this.#finishingOrder.fill(0);
+    this.#finishedSeats = 0;
+    for (const seat of state.finishingOrder) {
+      if (this.#finishedSeats < this.#finishingOrder.length) {
+        this.#finishingOrder[this.#finishedSeats] = seat;
+        this.#finishedSeats += 1;
+      }
+    }
+    this.#status = state.status;
+  }
+
   get status(): "playing" | "finished" {
     return this.#status;
+  }
+
+  /** Tokens of this seat that are home. */
+  homeCountOf(seat: number): number {
+    return this.#homeCount(seat);
   }
 
   get rolls(): number {
@@ -252,6 +297,7 @@ export class LudoSimulator {
 
   /** Sends every opponent token on a cell back to its yard. Returns how many. */
   #capture(seat: number, cell: number): number {
+    this.#lastCaptureMask = 0;
     if (this.#safe[cell] === 1) {
       return 0;
     }
@@ -277,6 +323,7 @@ export class LudoSimulator {
         }
         if (((this.#starts[other] ?? 0) + progress) % LUDO_GEOMETRY.ringCells === cell) {
           this.#progress[other * perPlayer + token] = YARD_STORED;
+          this.#lastCaptureMask |= 1 << other;
           captured += 1;
         }
       }
@@ -318,7 +365,7 @@ export class LudoSimulator {
    * the states, so any divergence between the two implementations fails a test
    * rather than quietly pricing a market wrong.
    */
-  playTurn(roll: number): SimTurnResult {
+  playTurn(roll: number, policy: LudoBotId = this.#policy): SimTurnResult {
     if (this.#status === "finished") {
       throw new Error("the game is over");
     }
@@ -332,7 +379,14 @@ export class LudoSimulator {
     if (config.tripleSixForfeit && roll === config.diceSides && this.#sixes === 2) {
       this.#sixes = 0;
       this.#advanceTurn();
-      return { captures: 0, broughtHome: false, forfeited: true, passed: false };
+      return {
+        captures: 0,
+        capturedSeatMask: 0,
+        entered: false,
+        broughtHome: false,
+        forfeited: true,
+        passed: false,
+      };
     }
 
     this.#countOccupancy();
@@ -379,7 +433,7 @@ export class LudoSimulator {
         }
       }
 
-      const score = this.#score(seat, token, from, to, cell, captures);
+      const score = this.#score(policy, seat, token, from, to, cell, captures);
       if (score > bestScore) {
         bestScore = score;
         bestToken = token;
@@ -391,11 +445,19 @@ export class LudoSimulator {
     if (bestToken === -1) {
       this.#sixes = 0;
       this.#advanceTurn();
-      return { captures: 0, broughtHome: false, forfeited: false, passed: true };
+      return {
+        captures: 0,
+        capturedSeatMask: 0,
+        entered: false,
+        broughtHome: false,
+        forfeited: false,
+        passed: true,
+      };
     }
 
     // Apply the chosen move.
     this.#progress[seat * perPlayer + bestToken] = bestTo + 1;
+    const entered = bestFrom === LUDO_YARD;
     let captured = 0;
     if (bestTo < LUDO_GEOMETRY.ringSteps && bestFrom <= LUDO_GEOMETRY.ringSteps - 1) {
       const cell = ((this.#starts[seat] ?? 0) + bestTo) % LUDO_GEOMETRY.ringCells;
@@ -409,10 +471,24 @@ export class LudoSimulator {
       this.#sixes = 0;
       this.#finishSeat(seat);
       if ((this.#status as "playing" | "finished") === "finished") {
-        return { captures: captured, broughtHome, forfeited: false, passed: false };
+        return {
+          captures: captured,
+          capturedSeatMask: this.#lastCaptureMask,
+          entered,
+          broughtHome,
+          forfeited: false,
+          passed: false,
+        };
       }
       this.#advanceTurn();
-      return { captures: captured, broughtHome, forfeited: false, passed: false };
+      return {
+        captures: captured,
+        capturedSeatMask: this.#lastCaptureMask,
+        entered,
+        broughtHome,
+        forfeited: false,
+        passed: false,
+      };
     }
 
     const earnedExtra =
@@ -427,11 +503,19 @@ export class LudoSimulator {
       this.#advanceTurn();
     }
 
-    return { captures: captured, broughtHome, forfeited: false, passed: false };
+    return {
+      captures: captured,
+      capturedSeatMask: this.#lastCaptureMask,
+      entered,
+      broughtHome,
+      forfeited: false,
+      passed: false,
+    };
   }
 
   /** The policy's score for one candidate move, matching `bots.ts` exactly. */
   #score(
+    policy: LudoBotId,
     seat: number,
     token: number,
     from: number,
@@ -442,7 +526,7 @@ export class LudoSimulator {
     void token;
     const homeProgress = LUDO_GEOMETRY.homeProgress + 1;
 
-    if (this.#policy === "racer") {
+    if (policy === "racer") {
       let points = to;
       if (to === LUDO_HOME) {
         points += 100;
@@ -453,7 +537,7 @@ export class LudoSimulator {
       return points;
     }
 
-    if (this.#policy === "aggressive") {
+    if (policy === "aggressive") {
       let points = captures * 100;
       if (captures > 0 && cell >= 0) {
         // How far along the captured token was; the nearest-home one is dearest.

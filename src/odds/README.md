@@ -12,22 +12,31 @@ event stream, and it writes to `markets` and nothing else.
 
 ## The pieces
 
-| File                   | What it does                                                                        |
-| ---------------------- | ----------------------------------------------------------------------------------- |
-| `calibrate.ts`         | Measures the shot table with the real engine: 2000 shots per cell.                  |
-| `shot-grid.ts`         | The grid itself: distance buckets, cut buckets, aim-error levels.                   |
-| `shot-table.ts`        | Loads `data/shot-table.json` and answers "does this shot pot?".                     |
-| `skill.ts`             | What we believe about a player: bots' published numbers, humans shrunk to Club.     |
-| `stats.ts`             | `MatchStats`: everything a market settles against, from the event log.              |
-| `carrom-fast-model.ts` | A whole match without physics, seeded and reproducible.                             |
-| `validation.ts`        | Fast model against the real engine, pairing by pairing, with tolerance.             |
-| `catalog/carrom.ts`    | The 30 market types: selections, settlement, push and void rules.                   |
-| `catalog/lines.ts`     | Every default line, in one place.                                                   |
-| `pricer.ts`            | Simulations to probabilities to odds, clamped, with the margin check.               |
-| `markets-store.ts`     | The `markets` table: upsert, list, suspend, close.                                  |
-| `live.ts`              | In-play: suspend on a shot, reprice at most once a second, publish ready-to-settle. |
-| `backtest.ts`          | Model probabilities against matches that really finished, in ten point buckets.     |
-| `config.ts`            | Simulation counts, stake ceilings by tier, probability and odds bounds.             |
+| File                    | What it does                                                                         |
+| ----------------------- | ------------------------------------------------------------------------------------ |
+| `calibrate.ts`          | Measures the shot table with the real engine: 2000 shots per cell.                   |
+| `shot-grid.ts`          | The grid itself: distance buckets, cut buckets, aim-error levels.                    |
+| `shot-table.ts`         | Loads `data/shot-table.json` and answers "does this shot pot?".                      |
+| `skill.ts`              | What we believe about a player: bots' published numbers, humans shrunk to Club.      |
+| `stats.ts`              | `MatchStats`: everything a market settles against, from the event log.               |
+| `carrom-fast-model.ts`  | A whole match without physics, seeded and reproducible.                              |
+| `validation.ts`         | Fast model against the real engine, pairing by pairing, with tolerance.              |
+| `catalog/carrom.ts`     | The 30 market types: selections, settlement, push and void rules.                    |
+| `catalog/lines.ts`      | Every default line, in one place.                                                    |
+| `pricer.ts`             | Simulations to probabilities to odds, clamped, with the margin check.                |
+| `markets-store.ts`      | The `markets` table: upsert, list, suspend, close.                                   |
+| `live.ts`               | In-play: suspend on a shot, reprice at most once a second, publish ready-to-settle.  |
+| `backtest.ts`           | Model probabilities against matches that really finished, in ten point buckets.      |
+| `config.ts`             | Simulation counts, stake ceilings by tier, probability and odds bounds.              |
+| `ludo-sim.ts`           | A whole Ludo game, seeded: per-turn policy, resume from any position, 0.14ms a game. |
+| `ludo-stats.ts`         | `LudoGameStats`: the facts a Ludo market settles against, trace optional.            |
+| `ludo-skill.ts`         | Reads a human's policy mix from their own decisions, shrunk to an even mix.          |
+| `ludo-sim-worker.ts`    | One batch on a worker thread: play games, tally selections, post the tallies.        |
+| `ludo-pool.ts`          | A batch over every core, split by seed, merged, with an inline fallback.             |
+| `ludo-count.ts`         | Where a game becomes a tally: one `settle` per selection, keyed for a thread merge.  |
+| `catalog/ludo.ts`       | 26 Ludo market types, 112 markets and 275 selections, with void rules.               |
+| `catalog/ludo-lines.ts` | Every Ludo line, half-points only so nothing can push.                               |
+| `ludo-pricer.ts`        | A million games inside a minute, or the documented fallback, into the same table.    |
 
 ## Scripts
 
@@ -86,6 +95,46 @@ Three things that only showed up against the real table:
    left the rows suspended. The engine now remembers finished matches, cancels
    their suspensions, waits for in-flight prices before closing, and refuses to
    reopen or reprice a finished match. `tests/odds/live.test.ts` pins it.
+
+## Ludo
+
+Ludo prices the same way Carrom does: play the match, count what won, apply the
+margin, clamp, write the rows. Three things are different, and each is a decision
+rather than an accident.
+
+**The clock is rounds, not rolls.** Measured over 20,000 four-bot games: 424 rolls,
+106 rounds, 89 turns for the winner, 71 sixes, 11.7 captures. The brief's lines
+were written as if a game were 50 to 140 turns long, so `totalTurns`, `never last`
+and `home at 60` are read in rounds: a round is one turn each of the seats in
+play. Reading them in rolls would put every game on the same side of every line.
+The sixes book keeps the brief's low lines and is extended upward to 90.5, because
+the median is 71 and a book that ends at 55.5 is all overs.
+
+**The batch size is chosen, not assumed.** A price calibrates on 20,000 games,
+measures this machine's rate, and plays a million if that fits inside 60 seconds.
+If it does not, it plays 200,000 and says so (`fellBack` on the report, a warning
+in the log). On one core a million games is 230 seconds; on four it is 73; on
+eight, 36. A price that quietly ran over its budget would be worse than a price
+with a wider confidence interval.
+
+**Some books cannot carry the margin, and that is recorded rather than hidden.**
+A selection at 1.01 odds cannot pay its share of a six percent margin, so a
+lopsided market's inverse sum falls short. Cumulative tiers (`1+`, `2+`, `3+
+captures`) can all win at once, so their inverse sum is meant to be well over the
+margin. Both cases are excluded from the margin check; a market that is neither is
+still checked, and still warns.
+
+What is verified, by measurement rather than assertion: four identical bots win
+25.6 / 25.5 / 24.4 / 24.5 percent with the first seat ahead (it rolls first); over
+20,000 games the match winner's probabilities sum to one inside a percent; higher
+lines are never more likely; sixes are one in six of turns; the first six falls to
+the seats 32 / 27 / 22 / 19 percent, which is turn order and not a bias. A resumed
+game starts where the board is and finishes. A batch replays identically however
+it is split, and the split loses no games.
+
+Still missing for Ludo: in-play repricing and settlement wiring, so the suspension,
+throttle and conditioning that Carrom has do not yet apply to a Ludo match, and a
+finished Ludo match does not yet pay a bet.
 
 ## Known defects, deliberately recorded
 
