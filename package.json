@@ -39,7 +39,8 @@
     "audit:all": "npm audit --audit-level=moderate",
     "verify": "npm run typecheck && npm run lint && npm test",
     "loadtest": "tsx scripts/loadtest.ts",
-    "money:demo:live": "tsx scripts/money-demo-live.ts"
+    "money:demo:live": "tsx scripts/money-demo-live.ts",
+    "spectate:loadtest": "tsx scripts/spectate-loadtest.ts"
   },
   "dependencies": {
     "@colyseus/monitor": "^0.18.7",

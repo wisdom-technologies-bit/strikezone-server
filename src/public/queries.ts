@@ -13,6 +13,7 @@ import type {
 import { env } from "../lib/env.js";
 import { logger } from "../lib/logger.js";
 import { supabase } from "../lib/supabase.js";
+import { ledgerCurrency } from "../wallet/payments.js";
 
 /**
  * The reads the public API serves.
@@ -166,7 +167,7 @@ function summaryOf(row: MatchRow, seats: readonly SeatRow[]): MatchSummary {
 class SupabasePublicQueries implements PublicQueries {
   config(): PublicConfig {
     return {
-      currency: env.CURRENCY,
+      currency: ledgerCurrency(),
       moneyMode: env.MONEY_MODE,
       minStakeMinor: env.MIN_STAKE_MINOR,
       maxStakeMinor: env.MAX_STAKE_MINOR,
@@ -471,7 +472,7 @@ class SupabasePublicQueries implements PublicQueries {
     );
 
     return {
-      currency: env.CURRENCY,
+      currency: ledgerCurrency(),
       availableMinor: available,
       atRiskMinor: atRisk,
       pendingWithdrawalMinor: pending,
@@ -533,7 +534,7 @@ class SupabasePublicQueries implements PublicQueries {
     });
 
     return {
-      currency: env.CURRENCY,
+      currency: ledgerCurrency(),
       transactions,
       nextCursor: rows.length > query.limit ? (page.at(-1)?.created_at ?? null) : null,
     };
@@ -634,7 +635,7 @@ class SupabasePublicQueries implements PublicQueries {
       .select("id")
       .eq("user_id", userId)
       .eq("owner_type", "user")
-      .eq("currency", env.CURRENCY)
+      .eq("currency", ledgerCurrency())
       .maybeSingle();
 
     if (error !== null) {

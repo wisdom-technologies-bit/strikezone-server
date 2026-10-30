@@ -69,7 +69,12 @@ interface Sample {
   readonly durationMs: number;
 }
 
-const readPaths = ["/health", "/api/bots", "/api/matches?limit=20", "/api/players?limit=20"];
+/**
+ * The public reads a launch actually serves. Every one of these answers 200 on a
+ * healthy server: a path that 404s measures the error handler rather than the
+ * read, and at 500 workers that is half the sample.
+ */
+const readPaths = ["/health", "/api/bots", "/api/tournaments", "/api/leaderboard"];
 
 /** One worker: request, measure, repeat, until the deadline. */
 async function worker(

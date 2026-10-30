@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { cpus } from "node:os";
-import { env } from "../lib/env.js";
 import { logger } from "../lib/logger.js";
 import { supabase } from "../lib/supabase.js";
 import { alertStore, type AlertRow } from "../monitoring/alerts.js";
+import { ledgerCurrency } from "../wallet/payments.js";
 import { reportsSource } from "./reports.js";
 import { adminStore, type AdminAction } from "./store.js";
 
@@ -160,7 +160,7 @@ export class SupabaseAdminConsole implements AdminConsole {
 
   async overview(): Promise<AdminOverview> {
     const [solvency, live, flagged, tournaments, alerts, paused] = await Promise.all([
-      reportsSource().solvency(env.CURRENCY),
+      reportsSource().solvency(ledgerCurrency()),
       supabase.from("matches").select("id").eq("status", "live").returns<{ id: string }[]>(),
       supabase
         .from("bets")
@@ -182,7 +182,7 @@ export class SupabaseAdminConsole implements AdminConsole {
     const exposureByMatch = await this.#exposure(liveMatchIds);
 
     return {
-      currency: env.CURRENCY,
+      currency: ledgerCurrency(),
       liveMatches: liveMatchIds.length,
       liveMatchIds,
       openExposureMinor: solvency.openExposureMinor,
@@ -539,7 +539,7 @@ export class InMemoryAdminConsole implements AdminConsole {
 
   overview(): Promise<AdminOverview> {
     return Promise.resolve({
-      currency: env.CURRENCY,
+      currency: ledgerCurrency(),
       liveMatches: this.#liveMatches.length,
       liveMatchIds: [...this.#liveMatches],
       openExposureMinor: this.#exposureMinor,

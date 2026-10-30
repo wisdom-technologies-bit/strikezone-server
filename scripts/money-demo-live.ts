@@ -27,6 +27,7 @@ import { placeBet } from "../src/betting/place.js";
 import { settleMatch } from "../src/betting/settle.js";
 import { reportsSource } from "../src/admin/reports.js";
 import { ledger } from "../src/wallet/ledger.js";
+import { ledgerCurrency } from "../src/wallet/payments.js";
 
 /**
  * Four distinct bots.
@@ -253,8 +254,12 @@ async function main(): Promise<void> {
 
   // 5. The books, read from the live ledger.
   const reports = reportsSource();
-  const solvency = await reports.solvency(env.CURRENCY);
-  const reconcile = await reports.reconcile(env.CURRENCY);
+  // The currency the ledger actually keeps, not the one the environment names.
+  // In virtual mode the ledger is XTS while env.CURRENCY is NGN, so reporting on
+  // env.CURRENCY read an empty set of books and called a healthy escrow a 30,000
+  // shortfall.
+  const solvency = await reports.solvency(ledgerCurrency());
+  const reconcile = await reports.reconcile(ledgerCurrency());
 
   console.log("");
   console.log(
