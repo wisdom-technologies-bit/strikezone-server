@@ -38,12 +38,43 @@ export interface FastMatchOptions {
   readonly queenPoints?: number;
   /** Seconds a shot is assumed to take, for the match-minutes markets. */
   readonly secondsPerShot?: number;
+  /** Overrides the fitted constants; used by the fitting script. */
+  readonly tuning?: FastTuning;
 }
 
 const OTHER: Readonly<Record<Colour, Colour>> = { white: "black", black: "white" };
 
-/** Share of boards that swing against the run of play. */
-const FLUKE_RATE = 0.16;
+/**
+ * The model's fitted constants.
+ *
+ * They are not guesses: `npm run odds:fit` sweeps them against matches played
+ * through the real engine and keeps the set with the smallest error. They live
+ * here so a run can override them, which is what fitting needs.
+ */
+export interface FastTuning {
+  /** Pot chance a hopeless shot selector keeps. */
+  readonly selectionFloor: number;
+  /** And what a perfect one adds on top. */
+  readonly selectionWeight: number;
+  /**
+   * How fast selection quality bites. Cubed was too gentle: the real engine puts
+   * a chasm between a Club bot (0.7) and a Master (0.95) and only a step between
+   * a Rookie (0.4) and a Club, and a low power cannot bend like that.
+   */
+  readonly qualityExponent: number;
+  /** Fraction of the skill's foul rate that survives per shot. */
+  readonly foulScale: number;
+  /** Share of boards that swing against the run of play. */
+  readonly flukeRate: number;
+}
+
+export const DEFAULT_TUNING: FastTuning = {
+  selectionFloor: 0.4,
+  selectionWeight: 0.6,
+  qualityExponent: 7,
+  foulScale: 0.35,
+  flukeRate: 0.16,
+};
 
 /**
  * How the table is read for a given board state.
@@ -59,12 +90,21 @@ export function shotGeometry(coinsOnBoard: number): { distanceMm: number; cutDeg
 }
 
 /** Chance the shooter pots a coin on this shot, from the table. */
-export function potChance(skill: FastSkill, coinsOnBoard: number): number {
+export function potChance(
+  skill: FastSkill,
+  coinsOnBoard: number,
+  tuning: FastTuning = DEFAULT_TUNING,
+): number {
   const { distanceMm, cutDegrees } = shotGeometry(coinsOnBoard);
   const base = pocketChance(SHOT_TABLE_SAFE, skill.aimErrorDegrees, distanceMm, cutDegrees);
-  // Selection quality is how well a player picks the shot in front of them; a
-  // poor chooser wastes good hands.
-  return Math.min(0.85, base * (0.75 + 0.25 * skill.selectionQuality));
+  // Selection quality is how well a player picks the shot in front of them, and
+  // it dominates: a bot that picks the right shot seven times in ten is not
+  // seven percent worse than one that picks it nineteen times in twenty. The
+  // weights here are fitted against the real engine (src/odds/validation.ts).
+  const quality = skill.selectionQuality;
+  const selection =
+    tuning.selectionFloor + tuning.selectionWeight * Math.pow(quality, tuning.qualityExponent);
+  return Math.min(0.85, base * selection);
 }
 
 /** Plays one whole match and returns the stats a market settles against. */
@@ -74,6 +114,7 @@ export function simulateFastMatch(options: FastMatchOptions): MatchStats {
   const coinsPerSide = options.coinsPerSide ?? 9;
   const queenPoints = options.queenPoints ?? 3;
   const secondsPerShot = options.secondsPerShot ?? 6;
+  const tuning = options.tuning ?? DEFAULT_TUNING;
 
   const rng: SeededRng = createSeededRng(`${options.seed}:${options.matchId}`);
 
@@ -128,7 +169,7 @@ export function simulateFastMatch(options: FastMatchOptions): MatchStats {
       const skill = skills[turn];
       const coinsOnBoard = left.white + left.black + (queenOnBoard ? 1 : 0);
 
-      if (rng.nextFloat() < skill.foulRate) {
+      if (rng.nextFloat() < skill.foulRate * tuning.foulScale) {
         fouls[turn] += 1;
         boardFouls[turn] += 1;
         if (rng.nextFloat() < 0.35) {
@@ -141,7 +182,7 @@ export function simulateFastMatch(options: FastMatchOptions): MatchStats {
         continue;
       }
 
-      const potted = rng.nextFloat() < potChance(skill, coinsOnBoard);
+      const potted = rng.nextFloat() < potChance(skill, coinsOnBoard, tuning);
 
       if (!potted) {
         turn = OTHER[turn];
@@ -194,7 +235,7 @@ export function simulateFastMatch(options: FastMatchOptions): MatchStats {
       boardQueenPoints = queenCovered && queenPocketedBy === boardWinner ? queenPoints : 0;
     }
 
-    if (rng.nextFloat() < FLUKE_RATE) {
+    if (rng.nextFloat() < tuning.flukeRate) {
       // A board can swing on a single queen-and-cover. Without this the model
       // sends the better player to a near-certain win, which no real board does.
       boardWinner = OTHER[boardWinner];

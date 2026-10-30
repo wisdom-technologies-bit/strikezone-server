@@ -24,7 +24,10 @@
     "verify-match": "tsx scripts/verify-match.ts",
     "carrom:watch": "tsx scripts/carrom-watch.ts",
     "tournament:demo": "tsx scripts/tournament-demo.ts",
-    "odds:calibrate": "tsx scripts/odds-calibrate.ts"
+    "odds:calibrate": "tsx scripts/odds-calibrate.ts",
+    "odds:validate": "tsx scripts/odds-validate.ts",
+    "odds:fit": "tsx scripts/odds-fit.ts",
+    "odds:backtest": "tsx scripts/odds-backtest.ts"
   },
   "dependencies": {
     "@colyseus/monitor": "^0.18.7",

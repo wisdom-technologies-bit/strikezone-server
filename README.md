@@ -53,6 +53,9 @@ Copy .env.example to .env and fill in every value (see README.md).
 | `npm run typecheck`                | `tsc --noEmit` over sources and tests              |
 | `npm run verify-match -- <id>`     | Re-check a finished match from the database        |
 | `npm run carrom:watch -- <roomId>` | Spectate a live room from the terminal             |
+| `npm run odds:calibrate`           | Re-measure the Carrom shot table                   |
+| `npm run odds:validate`            | Fast odds model against the real engine            |
+| `npm run odds:backtest`            | Score the model against finished matches           |
 | `npm run tournament:demo`          | Create, play out and print a whole tournament      |
 
 ## Environment variables
@@ -78,13 +81,14 @@ so the website can run locally against this server.
 
 ## HTTP endpoints
 
-| Endpoint                      | Status                      | Response                                                           |
-| ----------------------------- | --------------------------- | ------------------------------------------------------------------ |
-| `GET /health`                 | 200 while running           | `{ "ok": true, "version": "0.1.0", "uptimeSeconds": 42 }`          |
-| `GET /ready`                  | 200 when ready, 503         | `{ "ok": true, "checks": { "draining": "up", "supabase": "up" } }` |
-| `GET /api/bots`               | 200                         | The bot catalogue: level, name, policy id, numbers                 |
-| `GET /api/matches/:id/replay` | 200, 404                    | Seats, hash-chained events, chain check, result                    |
-| `POST /dev/start-match`       | 201, 400 (development only) | `{ matchId, roomId, seedCommit, seats }`                           |
+| Endpoint                       | Status                      | Response                                                           |
+| ------------------------------ | --------------------------- | ------------------------------------------------------------------ |
+| `GET /health`                  | 200 while running           | `{ "ok": true, "version": "0.1.0", "uptimeSeconds": 42 }`          |
+| `GET /ready`                   | 200 when ready, 503         | `{ "ok": true, "checks": { "draining": "up", "supabase": "up" } }` |
+| `GET /api/bots`                | 200                         | The bot catalogue: level, name, policy id, numbers                 |
+| `GET /api/matches/:id/replay`  | 200, 404                    | Seats, hash-chained events, chain check, result                    |
+| `GET /api/matches/:id/markets` | 200                         | Every market of a match, grouped by market type                    |
+| `POST /dev/start-match`        | 201, 400 (development only) | `{ matchId, roomId, seedCommit, seats }`                           |
 
 `/health` never touches the database, so a database outage does not restart an
 otherwise healthy process. `/ready` runs the Supabase connection test (a
