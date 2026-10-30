@@ -27,6 +27,7 @@
     "odds:calibrate": "tsx scripts/odds-calibrate.ts",
     "odds:validate": "tsx scripts/odds-validate.ts",
     "odds:fit": "tsx scripts/odds-fit.ts",
+    "odds:verify": "tsx scripts/odds-verify.ts",
     "odds:backtest": "tsx scripts/odds-backtest.ts"
   },
   "dependencies": {

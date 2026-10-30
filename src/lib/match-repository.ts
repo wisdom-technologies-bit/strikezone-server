@@ -390,16 +390,32 @@ export class SupabaseMatchRepository implements MatchRepository {
       }
 
       const profile = BOT_PROFILES[seat.botLevel];
-      const inserted = await this.#client
+      const displayName = seat.displayName ?? profile.displayName;
+
+      // A bot is a stable identity, not a per-match row: two matches with a Club
+      // bot must seat the same Club bot, and (players_bot_display_name_key)
+      // enforces it. Reuse the existing one, create it only when it is new.
+      const existing = await this.#client
         .from("players")
-        .insert({
-          kind: "bot",
-          display_name: seat.displayName ?? profile.displayName,
-          bot_policy: profile.policy,
-          skill: seat.skill ?? {},
-        })
         .select("id")
-        .single<{ id: string }>();
+        .eq("display_name", displayName)
+        .eq("kind", "bot")
+        .limit(1)
+        .maybeSingle<{ id: string }>();
+
+      const inserted =
+        existing.data !== null
+          ? { data: existing.data, error: null }
+          : await this.#client
+              .from("players")
+              .insert({
+                kind: "bot",
+                display_name: displayName,
+                bot_policy: profile.policy,
+                skill: seat.skill ?? {},
+              })
+              .select("id")
+              .single<{ id: string }>();
 
       if (inserted.error !== null || inserted.data === null) {
         throw new MatchRepositoryError(

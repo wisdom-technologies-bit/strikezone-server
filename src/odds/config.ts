@@ -12,6 +12,12 @@ export const LIVE_SIMULATIONS = 5_000;
 
 /** No selection is ever priced longer than this, whatever the model says. */
 export const MIN_PROBABILITY = 0.015;
+/**
+ * The ceiling. The markets table holds fair_probability strictly below one, and
+ * a price of certainty would be a lie anyway: a saved state can always be
+ * replayed. A selection that never lost in simulation is priced at this.
+ */
+export const MAX_PROBABILITY = 0.985;
 /** And no price is shorter than 1.01 or longer than 1000. */
 export const MIN_ODDS = 1.01;
 export const MAX_ODDS = 1_000;

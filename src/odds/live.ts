@@ -26,7 +26,13 @@ export interface OddsEngineOptions {
   readonly matches?: MatchRepository;
   readonly repriceIntervalMs?: number;
   readonly suspensionMs?: number;
+  /** Matches simulated for a live reprice. Defaults to the config's 5,000. */
   readonly simulations?: number;
+  /**
+   * Matches simulated for the pre-match price. Defaults to the config's 100,000;
+   * tests lower it because a test needs the shape, not the precision.
+   */
+  readonly preMatchSimulations?: number;
   readonly now?: () => number;
   readonly clock?: {
     setTimeout: (callback: () => void, delayMs: number) => { cancel: () => void };
@@ -57,12 +63,19 @@ export function attachOddsEngine(options: OddsEngineOptions = {}): OddsEngine {
   const repriceIntervalMs = options.repriceIntervalMs ?? REPRICE_INTERVAL_MS;
   const suspensionMs = options.suspensionMs ?? SUSPENSION_MS;
   const simulations = options.simulations ?? LIVE_SIMULATIONS;
+  const preMatchSimulations = options.preMatchSimulations;
   const now = options.now ?? (() => Date.now());
   const clock = options.clock ?? defaultClock;
 
   const lastPriceAt = new Map<string, number>();
   const pending = new Map<string, { shotNumber: number; at: number }>();
   const suspensions = new Map<string, { cancel: () => void }>();
+  /**
+   * Matches that are over. A shot's reprice reopens the book two seconds later,
+   * and that timer can outlive the finish: without this the last shot of a match
+   * would reopen a closed market a moment after the result was known.
+   */
+  const finishedMatches = new Set<string>();
   const inFlight = new Set<Promise<void>>();
   const unsubscribes: (() => void)[] = [];
   let stopped = false;
@@ -74,8 +87,36 @@ export function attachOddsEngine(options: OddsEngineOptions = {}): OddsEngine {
     await repository.setStatus(matchId, "closed", { live: false });
   };
 
+  /**
+   * What happens when a price has been written: close a finished match's book,
+   * or schedule the reopen. Kept out of the finally block so a reprice's outcome
+   * is never swallowed by a return.
+   */
+  const settleSuspension = (matchId: string): void => {
+    if (finishedMatches.has(matchId)) {
+      // The match ended while this price was being computed. Its rows were
+      // written suspended; close them rather than open a finished match.
+      void repository.setStatus(matchId, "closed").catch((error: unknown) => {
+        logger.warn({ matchId, err: error }, "could not close the markets");
+      });
+      return;
+    }
+
+    const suspension = clock.setTimeout(() => {
+      suspensions.delete(matchId);
+      // A newer shot is already queued: stay shut until it has been priced.
+      if (pending.has(matchId) || finishedMatches.has(matchId)) {
+        return;
+      }
+      void repository.setStatus(matchId, "open").catch((error: unknown) => {
+        logger.warn({ matchId, err: error }, "could not reopen the markets");
+      });
+    }, suspensionMs);
+    suspensions.set(matchId, suspension);
+  };
+
   const reprice = (matchId: string, shotNumber: number, game: CarromGame): void => {
-    if (stopped) {
+    if (stopped || finishedMatches.has(matchId)) {
       return;
     }
 
@@ -105,17 +146,7 @@ export function attachOddsEngine(options: OddsEngineOptions = {}): OddsEngine {
         logger.warn({ matchId, err: error }, "could not reprice the match");
       } finally {
         suspensions.get(matchId)?.cancel();
-        const suspension = clock.setTimeout(() => {
-          suspensions.delete(matchId);
-          // A newer shot is already queued: stay shut until it has been priced.
-          if (pending.has(matchId)) {
-            return;
-          }
-          void repository.setStatus(matchId, "open").catch((error: unknown) => {
-            logger.warn({ matchId, err: error }, "could not reopen the markets");
-          });
-        }, suspensionMs);
-        suspensions.set(matchId, suspension);
+        settleSuspension(matchId);
       }
     })();
 
@@ -151,7 +182,11 @@ export function attachOddsEngine(options: OddsEngineOptions = {}): OddsEngine {
 
   unsubscribes.push(
     subscribe("match.created", (payload) => {
-      const job = priceMatch(payload.matchId, { repository, matches }).then(
+      const job = priceMatch(payload.matchId, {
+        repository,
+        matches,
+        ...(preMatchSimulations === undefined ? {} : { simulations: preMatchSimulations }),
+      }).then(
         () => {
           logger.info({ matchId: payload.matchId }, "priced a new match");
         },
@@ -188,8 +223,14 @@ export function attachOddsEngine(options: OddsEngineOptions = {}): OddsEngine {
 
   unsubscribes.push(
     subscribe("match.finished", (payload) => {
+      finishedMatches.add(payload.matchId);
+      pending.delete(payload.matchId);
+      suspensions.get(payload.matchId)?.cancel();
+      suspensions.delete(payload.matchId);
+
       const job = (async () => {
         try {
+          await Promise.all([...inFlight]);
           const events = await matches.listEvents(payload.matchId);
           const stats = computeMatchStats(payload.matchId, events);
           await repository.setStatus(payload.matchId, "closed");

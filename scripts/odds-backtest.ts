@@ -1,6 +1,6 @@
 import { supabase } from "../src/lib/supabase.js";
 import { matchRepository } from "../src/lib/match-store.js";
-import { runBacktest } from "../src/odds/backtest.js";
+import { MINIMUM_PER_BUCKET, runBacktest } from "../src/odds/backtest.js";
 import type { MatchLogEntry } from "../src/lib/match-log.js";
 import type { MatchRecord } from "../src/lib/match-repository.js";
 
@@ -32,7 +32,7 @@ async function main(): Promise<number> {
     .from("matches")
     .select("id")
     .eq("status", "finished")
-    .order("created_date", { ascending: false })
+    .order("started_at", { ascending: false, nullsFirst: false })
     .limit(limit);
 
   if (error !== null) {
@@ -74,7 +74,8 @@ async function main(): Promise<number> {
     );
   }
   console.log(
-    `\nbrier ${report.brier.toFixed(4)}  worst bucket error ${(report.worstError * 100).toFixed(1)}pp`,
+    `\nbrier ${report.brier.toFixed(4)}  worst bucket error ${(report.worstError * 100).toFixed(1)}pp` +
+      ` (counting buckets of ${String(MINIMUM_PER_BUCKET)} claims or more)`,
   );
 
   return 0;

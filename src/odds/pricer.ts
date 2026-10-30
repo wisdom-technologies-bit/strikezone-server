@@ -10,6 +10,7 @@ import {
 } from "./catalog/carrom.js";
 import {
   MAX_STAKE_BY_TIER,
+  MAX_PROBABILITY,
   MIN_PROBABILITY,
   PRICE_SIMULATIONS,
   houseMarginBps,
@@ -196,7 +197,13 @@ export async function priceMatch(
 
     for (const selection of market.selections) {
       const measured = tally.probability(market, selection.key);
-      const fair = measured === null ? MIN_PROBABILITY : Math.max(MIN_PROBABILITY, measured);
+      // Clamped at both ends: below by the config floor, above because a
+      // selection that won every simulation is still not a certainty, and the
+      // markets table refuses a probability of exactly one.
+      const fair =
+        measured === null
+          ? MIN_PROBABILITY
+          : Math.min(MAX_PROBABILITY, Math.max(MIN_PROBABILITY, measured));
       const odds = oddsFor(fair, marginBps);
       if (measured !== null) {
         anyDecided = true;

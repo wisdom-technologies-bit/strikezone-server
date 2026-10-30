@@ -21,6 +21,9 @@ import type { MatchRecord } from "../lib/match-repository.js";
  */
 
 /** One priced claim and what happened. */
+/** A bucket needs this many claims before its error is worth reading. */
+export const MINIMUM_PER_BUCKET = 20;
+
 export interface BacktestSample {
   readonly marketType: string;
   readonly predicted: number;
@@ -53,7 +56,7 @@ export function bucketCalibration(
   samples: readonly BacktestSample[],
   options: { readonly minimumPerBucket?: number } = {},
 ): BacktestReport {
-  const minimum = options.minimumPerBucket ?? 20;
+  const minimum = options.minimumPerBucket ?? MINIMUM_PER_BUCKET;
   const buckets = new Map<number, { predicted: number; hits: number; count: number }>();
 
   let squaredError = 0;

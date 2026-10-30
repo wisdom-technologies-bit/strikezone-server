@@ -59,6 +59,34 @@ and a repricing whose shot is already stale is dropped rather than written over
 newer numbers. When the match ends the engine publishes `markets.ready_to_settle`
 with the stats and settles nothing itself: settlement belongs to the betting side.
 
+## Measured against the database
+
+`npm run odds:verify` creates a bot match in the real database and acts as the
+room: it publishes `match.created`, plays the match through the runner with a
+`match.shot` per shot, and publishes `match.finished`. Last run, Club against
+Rookie:
+
+- 231 rows priced across all 30 market types in 12 seconds, every one open;
+  the spec budget is twenty seconds for a 100,000-simulation price.
+- 231 shots played in 32 seconds, repriced in play under a 2.5 second throttle,
+  every market suspended while the shot was being priced and reopened after.
+- 231 rows closed at the finish, and one `markets.ready_to_settle` with the
+  winner and the boards played.
+
+Three things that only showed up against the real table:
+
+1. `markets.fair_probability` is bounded strictly inside (0, 1), so a selection
+   that never lost in simulation has to be capped below one. `MAX_PROBABILITY`
+   (0.985) is that ceiling.
+2. The bot player is a real row with a unique display name, so the second match
+   of a level must seat the same bot. `SupabaseMatchRepository.create` looks the
+   bot up before inserting.
+3. A reprice can outlive the match it belongs to. The suspension timer from the
+   last shot would reopen a closed book, and a price written after the finish
+   left the rows suspended. The engine now remembers finished matches, cancels
+   their suspensions, waits for in-flight prices before closing, and refuses to
+   reopen or reprice a finished match. `tests/odds/live.test.ts` pins it.
+
 ## Known defects, deliberately recorded
 
 1. **The shot table is not monotone cell by cell.** Shots that cannot be played
@@ -76,5 +104,10 @@ with the stats and settles nothing itself: settlement belongs to the betting sid
    re-simulates from the start, so a 20-4 lead does not move the match winner
    price as it should. The suspension, the throttle and the stale-job drop all
    work; only the conditioning is missing.
-4. **Human history is not loaded yet.** `skill.ts` can shrink samples, but the
+4. **A reprice rewrites all 231 rows.** Each write is one upsert, but it is
+   seconds of latency against a remote database, so the throttle inside a match
+   has to be generous (2.5s in the verification) or the prices starve the match
+   they are pricing. Writing only the rows whose price moved, or batching into
+   one transaction per market type, is the fix.
+5. **Human history is not loaded yet.** `skill.ts` can shrink samples, but the
    pricer does not read a player's last 30 matches, so every human prices as Club.
