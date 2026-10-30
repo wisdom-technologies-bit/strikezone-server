@@ -81,6 +81,11 @@ export interface LudoRunnerHooks {
   onTurn?: (info: LudoTurnInfo) => void;
   /** The game is over and the result is written. */
   onEnd?: (info: { readonly result: MatchResult; readonly state: LudoState }) => void;
+  /**
+   * The log lost an entry, so the match cannot be signed or settled. The room
+   * closes it as abandoned instead of letting a result reach the books.
+   */
+  onAbandoned?: (info: { readonly reason: string }) => void;
 }
 
 /** What the room broadcasts when the die is rolled. */
@@ -520,6 +525,20 @@ export class LudoMatchRunner {
       return;
     }
     this.#ended = true;
+
+    // The queued writes are flushed first: a result is signed over the log's head,
+    // and a head read before the last turns land would sign a log that does not
+    // contain them.
+    await this.#writes;
+
+    if (this.#appendFailed) {
+      this.#deps.logger.error(
+        { matchId: this.#deps.matchId },
+        "the match log is incomplete: abandoning the match rather than signing it",
+      );
+      this.#deps.hooks?.onAbandoned?.({ reason: "match log incomplete" });
+      return;
+    }
     this.#cancel?.();
     this.#cancel = null;
 
@@ -554,6 +573,17 @@ export class LudoMatchRunner {
     this.#deps.hooks?.onEnd?.({ result, state: this.#state });
   }
 
+  /**
+   * Set when an append fails.
+   *
+   * A turn that never reached the log leaves a hole, and a result signed over a
+   * log with a hole is a result that will not verify: the replay sees a board that
+   * disagrees with the recorded result, and the reason is invisible from there.
+   * So the failure is remembered, and a match whose log is incomplete is abandoned
+   * rather than finished.
+   */
+  #appendFailed = false;
+
   /** Queues a batch of log entries, in order. */
   #append(entries: readonly MatchLogEntry[]): Promise<void> {
     if (entries.length === 0) {
@@ -562,7 +592,8 @@ export class LudoMatchRunner {
     this.#writes = this.#writes
       .then(() => this.#deps.repository.appendEvents(this.#deps.matchId, [...entries]))
       .catch((error: unknown) => {
-        this.#deps.logger.warn(
+        this.#appendFailed = true;
+        this.#deps.logger.error(
           { err: error, matchId: this.#deps.matchId },
           "could not append to the match log",
         );
