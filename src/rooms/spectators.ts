@@ -148,12 +148,23 @@ export class SpectatorHub {
    * belong to.
    */
   sendSnapshot(sessionId: string, snapshot: SnapshotMessage): void {
+    this.sendState(sessionId, STREAM_MESSAGES.snapshot, snapshot);
+  }
+
+  /**
+   * Delivers whatever a viewer needs to be live, and makes it live.
+   *
+   * Carrom's snapshot and Ludo's are different shapes, so this takes the message
+   * type: what matters to the hub is that the viewer has state and may now receive
+   * frames, not what the state looks like.
+   */
+  sendState(sessionId: string, type: string, payload: unknown): void {
     const spectator = this.#spectators.get(sessionId);
     if (spectator === undefined) {
       return;
     }
     spectator.pending = false;
-    this.#transport.send(sessionId, STREAM_MESSAGES.snapshot, snapshot);
+    this.#transport.send(sessionId, type, payload);
   }
 
   /**
@@ -185,6 +196,26 @@ export class SpectatorHub {
         });
         spectator.skipped = 0;
       }
+    }
+  }
+
+  /**
+   * Sends one message to every live spectator.
+   *
+   * The same backpressure rule as {@link broadcastShot}: a viewer whose socket is
+   * behind is skipped, not queued for. Ludo uses this for its roll and move
+   * messages, which are small but just as unbounded in number.
+   */
+  broadcast(type: string, payload: unknown): void {
+    for (const [sessionId, spectator] of this.#spectators) {
+      if (spectator.pending) {
+        continue;
+      }
+      if (this.#transport.bufferedBytes(sessionId) > this.#limits.maxBufferedBytes) {
+        spectator.skipped += 1;
+        continue;
+      }
+      this.#transport.send(sessionId, type, payload);
     }
   }
 

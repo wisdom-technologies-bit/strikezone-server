@@ -4,9 +4,11 @@ import {
   type CarromConfig,
 } from "../engines/carrom/config.js";
 import { applyShot, createInitialState, type CarromShot } from "../engines/carrom/index.js";
+import type { LudoConfig } from "../engines/ludo/index.js";
 import { verifyCommit } from "./fair-rng.js";
 import { verifyLogChain, verifyResultSignature, type MatchLogEntry } from "./match-log.js";
 import type { MatchRecord, MatchRepository } from "./match-repository.js";
+import { verifyLudoMatch } from "./match-verify-ludo.js";
 
 /**
  * Independent verification of a finished match.
@@ -33,6 +35,7 @@ export interface VerifyCheck {
     | "seed_commit"
     | "hash_chain"
     | "shot_replay"
+    | "move_replay"
     | "final_result"
     | "result_signature";
   readonly ok: boolean;
@@ -57,6 +60,8 @@ export interface VerifyOptions {
   readonly secret?: string;
   /** Overrides the rules stored on the match. */
   readonly config?: CarromConfig;
+  /** Overrides the Ludo rules stored on the match. */
+  readonly ludoConfig?: LudoConfig;
 }
 
 /** Checks a finished match. Never throws for a bad match: it reports. */
@@ -83,6 +88,15 @@ export async function verifyMatch(
       failure: "no such match",
       shots: 0,
     };
+  }
+
+  // A Ludo match has its own replay: the shared checks are the same, the part that
+  // matters is different, so it is a separate verifier with the same report shape.
+  if (match.game === "ludo") {
+    return verifyLudoMatch(match, repository, {
+      ...(options.secret === undefined ? {} : { secret: options.secret }),
+      ...(options.ludoConfig === undefined ? {} : { config: options.ludoConfig }),
+    });
   }
 
   // 1. Finished, with the seed revealed.

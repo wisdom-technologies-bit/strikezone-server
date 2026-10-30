@@ -833,15 +833,22 @@ class MatchRepositoryErrorLike extends Error {
   }
 }
 
-/** Builds runner seats from a stored match. */
+/**
+ * Builds runner seats from a stored match.
+ *
+ * Carrom seats two, so a seat number outside 1 and 2 is a match for the other
+ * game: it is dropped rather than mistyped into the shape carrom expects.
+ */
 export function runnerSeatsFromMatch(match: MatchRecord): RunnerSeat[] {
-  return match.seats.map((seat: MatchSeat) => ({
-    seat: seat.seat,
+  return match.seats
+    .filter((seat: MatchSeat) => seat.seat === 1 || seat.seat === 2)
+    .map((seat: MatchSeat) => ({
+      seat: seat.seat === 1 ? 1 : 2,
     playerId: seat.playerId,
     displayName: seat.displayName,
     isBot: seat.isBot,
     botLevel: seat.botLevel,
-    botPolicy: seat.botPolicy,
-    skill: seat.skill,
-  }));
+      botPolicy: seat.botPolicy,
+      skill: seat.skill,
+    }));
 }

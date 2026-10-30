@@ -56,7 +56,7 @@ export interface MatchLivePayload {
 export interface ShotReceivedPayload {
   readonly matchId: string;
   readonly game: "carrom" | "ludo";
-  readonly seat: 1 | 2;
+  readonly seat: 1 | 2 | 3 | 4;
   /** Who produced it. A timeout is not a human decision and a bot is not either. */
   readonly source: "human" | "bot" | "timeout";
   /** The shot number this will become, so a subscriber can key its own state. */
@@ -67,10 +67,27 @@ export interface ShotReceivedPayload {
 export interface MatchShotPayload {
   readonly matchId: string;
   readonly game: "carrom" | "ludo";
-  /** 1 or 2. */
-  readonly seat: 1 | 2;
+  /** The seat, 1 to 4: carrom uses two, ludo four. */
+  readonly seat: 1 | 2 | 3 | 4;
   /** How many shots the match has now played, counting this one. */
   readonly shotNumber: number;
+}
+
+/**
+ * A Ludo move is known, before the next roll is broadcast.
+ *
+ * The counterpart of `shot.received`: whoever prices a Ludo market learns which
+ * token moved, with which roll, before the board can move again.
+ */
+export interface MoveReceivedPayload {
+  readonly matchId: string;
+  readonly game: "carrom" | "ludo";
+  readonly seat: 1 | 2 | 3 | 4;
+  /** How many turns the match has resolved, counting this one. */
+  readonly moveNumber: number;
+  /** The token that moved, or null when the turn passed without a move. */
+  readonly token: number | null;
+  readonly roll: number;
 }
 
 /** A match finished, with the signed result. */
@@ -153,6 +170,7 @@ export interface EventPayloads {
   "match.live": MatchLivePayload;
   "match.shot": MatchShotPayload;
   "shot.received": ShotReceivedPayload;
+  "move.received": MoveReceivedPayload;
   "match.finished": MatchFinishedPayload;
   "markets.ready_to_settle": MarketsReadyToSettlePayload;
   "tournament.opened": TournamentOpenedPayload;
@@ -171,6 +189,7 @@ export const EVENT_NAMES: readonly EventName[] = [
   "match.live",
   "match.shot",
   "shot.received",
+  "move.received",
   "match.finished",
   "markets.ready_to_settle",
   "tournament.opened",

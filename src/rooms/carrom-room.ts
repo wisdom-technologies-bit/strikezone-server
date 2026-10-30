@@ -524,7 +524,8 @@ export class CarromRoom extends Room<{ state: CarromRoomStateInstance }> {
   #seatForUser(userId: string): 1 | 2 | null {
     const seats = this.#match?.seats ?? [];
     for (const seat of seats) {
-      if (seat.profileId === userId) {
+      // Carrom seats two; a wider seat number cannot be authorised here.
+      if (seat.profileId === userId && (seat.seat === 1 || seat.seat === 2)) {
         return seat.seat;
       }
     }

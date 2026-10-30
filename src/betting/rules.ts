@@ -1,5 +1,5 @@
 import type { Settlement } from "../odds/catalog/carrom.js";
-import type { MatchRecord } from "../lib/match-repository.js";
+import type { MatchRecord, MatchSeat } from "../lib/match-repository.js";
 
 /**
  * The betting arithmetic that must be identical everywhere: the payout, the
@@ -73,8 +73,14 @@ export function wholeMatchVoidReason(
 ): VoidReason {
   const joined = (seat: 1 | 2): string | null | undefined =>
     seat === 1 ? match.seat1JoinedAt : match.seat2JoinedAt;
+  // A ludo match has four seats and is never settled here; only 1 and 2 matter.
+  const seatsInPlay = match.seats.filter(
+    (seat): seat is MatchSeat & { seat: 1 | 2 } => seat.seat === 1 || seat.seat === 2,
+  );
 
-  const walkover = match.seats.some((seat) => !seat.isBot && (joined(seat.seat) ?? null) === null);
+  const walkover = seatsInPlay.some(
+    (seat) => !seat.isBot && (joined(seat.seat) ?? null) === null,
+  );
 
   if (walkover) {
     return "walkover";

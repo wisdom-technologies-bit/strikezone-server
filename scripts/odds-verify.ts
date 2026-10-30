@@ -90,7 +90,12 @@ const runner = new CarromMatchRunner({
           match.seats.find((seat) => seat.seat === result.winnerSeat)?.playerId ?? null,
         loserPlayerId:
           match.seats.find((seat) => seat.seat !== result.winnerSeat)?.playerId ?? null,
-        reason: result.reason,
+        reason:
+          result.reason === "scored" ||
+          result.reason === "forfeit" ||
+          result.reason === "board_limit"
+            ? result.reason
+            : "forfeit",
         scores: { white: result.scores.white, black: result.scores.black },
       });
     },

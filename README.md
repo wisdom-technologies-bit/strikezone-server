@@ -58,6 +58,9 @@ Copy .env.example to .env and fill in every value (see README.md).
 | `npm run odds:backtest`            | Score the model against finished matches           |
 | `npm run tournament:demo`          | Create, play out and print a whole tournament      |
 | `npm run money:demo`               | Top up, bet, settle and reconcile, in memory       |
+| `npm run ludo:demo`                | Play a four bot Ludo match and verify it           |
+| `npm run ludo:watch`               | Run the server on an in-memory store for the viewer |
+| `npm run ludo:bench`               | Measure the Ludo engine and the simulator          |
 | `npm run contract:check`           | Compile the contract file on its own               |
 
 ## Environment variables
@@ -160,7 +163,11 @@ Limits come from configuration: `MAX_SPECTATORS_PER_ROOM` (default 2000) and
 `SPECTATOR_JOIN_PER_MINUTE` (default 60, per address).
 
 In development, start the server and open `/dev/watch.html`: press start and a bot
-match plays out on a canvas. The page is served only when `NODE_ENV=development`.
+match plays out on a canvas. For Ludo, open `/dev/ludo.html` (or run
+`npm run ludo:watch`, which needs no database at all) and press "Start a four bot
+match": the page draws the ring, the yards, the home lanes and the tokens from the
+`roll` and `move` messages, and prints the score and the event log beside them. Both
+pages are served only when `NODE_ENV=development`.
 
 ## The public API
 
@@ -461,6 +468,56 @@ default seed, a whole match.
 
 No bots, rooms or betting wiring yet: `applyShot` is what a room will call, and
 `BotPolicy` is the seam a bot plugs into.
+
+### Ludo - the second game
+
+Ludo is the second game, and it is the proof that the seams hold: the engine, the
+room, the verifier and the viewer all attach to the same interfaces Carrom uses,
+and nothing in the tournament, money or API layers was rewritten to admit it.
+
+**The engine** (`src/engines/ludo/`) is a pure state machine over a typed board:
+four seats, four tokens each, a six-sided die, twelve ring cells between starts,
+a five-cell home lane and a one-cell home. Rolls come from a seeded stream, never
+from `Math.random`, so a match is a seed plus the sequence of choices. The referee
+(`src/rooms/ludo-match-runner.ts`) owns those choices: a human has exactly one
+message type, `{ type: "move", tokenIndex }`, twenty seconds to send it, and the
+published policy plays for them if they do not (three timeouts forfeit the match).
+Bots think for one to three seconds, so a game reads like four people playing.
+
+`src/engines/ludo/sim.ts` is the same rules, alloc-free, for the simulator: over a
+million turns a second, used by the bench and by anything that wants to sample
+games without a room.
+
+**Verification** is the same promise as Carrom, answered for a die: the revealed
+seed hashes to its commitment, the log's hash chain runs to the head the result was
+signed over, every recorded roll is the roll the seeded stream produced, every
+recorded move is legal from the position the log rebuilds, and the finishing order
+the replay reaches is the one in the signed result. `npm run verify-match -- <id>`
+dispatches on the match's game, so one command verifies either.
+
+```
+npm run ludo:demo
+```
+
+plays a whole four bot match in memory, verifies it, prints `PASS`, then rewrites a
+recorded roll and shows the verifier refusing it: the failure is reported as a roll
+the seed did not produce, not merely as a broken hash, because the tampered entry is
+re-chained before it is offered.
+
+**Tournament heats are not wired yet.** The bracket seam is two-seat by
+construction: `tournament_matches` has `seat1_player_id` and `seat2_player_id`,
+`PositionSeat` is `1 | 2`, and the scheduler advances a winner into one seat of one
+later position. A four-seat heat needs a place for four entrants, a finishing order
+and an advancement rule that takes the top two, which is a schema change (migration
+`010_ludo_heats.sql`) before it is a code change. Ludo tournaments therefore run as
+the two-seat formats for now, and a Ludo match inside a tournament is a two-player
+one. See `docs/ludo-tournaments.md`.
+
+**What to watch out for.** A bot that waited a second on every forced move made a
+four bot game take four minutes, so the single-legal-move delay applies only to a
+human. And the log's turn entries are appended as they happen, chained one at a
+time: a result entry written by the same `await` chain cannot race them, which is
+what makes the replay trustworthy in the first place.
 
 ### Live matches - bots, the referee and the log
 

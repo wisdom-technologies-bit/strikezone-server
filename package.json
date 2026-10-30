@@ -31,7 +31,10 @@
     "odds:verify": "tsx scripts/odds-verify.ts",
     "odds:backtest": "tsx scripts/odds-backtest.ts",
     "money:demo": "tsx scripts/money-demo.ts",
-    "watch:demo": "tsx scripts/watch-demo.ts"
+    "watch:demo": "tsx scripts/watch-demo.ts",
+    "ludo:bench": "tsx scripts/ludo-bench.ts",
+    "ludo:demo": "tsx scripts/ludo-demo.ts",
+    "ludo:watch": "tsx scripts/ludo-watch.ts"
   },
   "dependencies": {
     "@colyseus/monitor": "^0.18.7",

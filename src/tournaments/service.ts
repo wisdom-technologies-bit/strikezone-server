@@ -816,7 +816,12 @@ export class TournamentService {
         tournamentId: tournament.id,
         winnerPlayerId: completed.winnerPlayerId,
         loserPlayerId: completed.loserPlayerId,
-        reason: match.result.reason,
+        reason:
+          match.result.reason === "scored" ||
+          match.result.reason === "forfeit" ||
+          match.result.reason === "board_limit"
+            ? match.result.reason
+            : "forfeit",
         scores: match.result.scores,
       });
     }

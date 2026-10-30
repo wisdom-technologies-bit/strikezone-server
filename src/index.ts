@@ -10,6 +10,7 @@ import { logger } from "./lib/logger.js";
 import { isOriginAllowed } from "./lib/origins.js";
 import { DEFAULT_DRAIN_TIMEOUT_MS, registerShutdownHandlers } from "./lib/shutdown.js";
 import { CarromRoom } from "./rooms/carrom-room.js";
+import { LudoRoom } from "./rooms/ludo-room.js";
 import { tournamentRepository } from "./tournaments/repository.js";
 import { SupabaseSchedulerLease, TournamentScheduler } from "./tournaments/scheduler.js";
 import { tournamentService } from "./tournaments/index.js";
@@ -41,6 +42,7 @@ const gameServer = new ColyseusServer({ transport, greet: false });
 // One room type: a live carrom match. Only the server creates these, through
 // POST /dev/start-match in development or matchmaking later; clients join by id.
 gameServer.define("carrom", CarromRoom);
+gameServer.define("ludo", LudoRoom);
 
 await gameServer.listen(env.PORT);
 

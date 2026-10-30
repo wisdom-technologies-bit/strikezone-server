@@ -465,6 +465,10 @@ export const STREAM_MESSAGES = {
   end: "match_end",
   lag: "lag",
   rejected: "rejected",
+  /** Ludo: the die is on the table and a seat has to choose. */
+  roll: "roll",
+  /** Ludo: a turn resolved. */
+  move: "move",
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -740,3 +744,82 @@ export const leaderboardQuerySchema = z.object({
     .transform((value) => value),
 });
 export type LeaderboardQuery = z.infer<typeof leaderboardQuerySchema>;
+
+// ---------------------------------------------------------------------------
+// Ludo: the stream
+// ---------------------------------------------------------------------------
+
+/**
+ * The roll, broadcast when the server has thrown the die.
+ *
+ * A player answers it with `{ type: "move", tokenIndex }`, choosing one of
+ * `tokens`: those are the tokens that have a legal move, so a client shows exactly
+ * the choices the referee will accept.
+ */
+export const ludoRollMessageSchema = z.strictObject({
+  type: z.literal("roll"),
+  matchId: z.string().min(1),
+  /** The seat to play, 1 to 4. */
+  seat: z.number().int().min(1).max(4),
+  roll: z.number().int().min(1).max(6),
+  /** The token numbers that may move with this roll. */
+  tokens: z.array(z.number().int().min(0).max(3)),
+  moveNumber: z.number().int().min(0),
+  /** Seconds the seat has to choose. */
+  moveSeconds: z.number().int().min(1),
+  /** True when this is the third six in a row and the turn is already lost. */
+  forfeited: z.boolean(),
+});
+export type LudoRollMessage = z.infer<typeof ludoRollMessageSchema>;
+
+/** The token a client wants to move. */
+export const ludoMoveCommandSchema = z.strictObject({
+  type: z.literal("move"),
+  tokenIndex: z.number().int().min(0).max(3),
+});
+export type LudoMoveCommand = z.infer<typeof ludoMoveCommandSchema>;
+
+/** A resolved turn: what moved, and the events it produced. */
+export const ludoMoveMessageSchema = z.strictObject({
+  type: z.literal("move"),
+  matchId: z.string().min(1),
+  seat: z.number().int().min(1).max(4),
+  roll: z.number().int().min(1).max(6),
+  moveNumber: z.number().int().min(1),
+  /** The token that moved, or null when the turn passed. */
+  token: z.number().int().min(0).max(3).nullable(),
+  from: z.number().int().min(-1).max(57).nullable(),
+  to: z.number().int().min(-1).max(57).nullable(),
+  /** One word per event, in order: token_out, capture, token_home, and so on. */
+  events: z.array(z.string().min(1)),
+  /** Who plays next. */
+  turnSeat: z.number().int().min(1).max(4),
+  /** True when the same seat rolls again. */
+  extraRoll: z.boolean(),
+});
+export type LudoMoveMessage = z.infer<typeof ludoMoveMessageSchema>;
+
+/** The whole board, for a viewer that has just arrived. */
+export const ludoSnapshotMessageSchema = z.strictObject({
+  type: z.literal("snapshot"),
+  matchId: z.string().min(1),
+  status: z.enum(["playing", "finished"]),
+  turnSeat: z.number().int().min(1).max(4),
+  roll: z.number().int().min(0).max(6),
+  moveNumber: z.number().int().min(0),
+  seeds: z.object({ commit: z.string().min(1), reveal: z.string().nullable() }),
+  seats: z.array(
+    z.strictObject({
+      seat: z.number().int().min(1).max(4),
+      displayName: z.string(),
+      isBot: z.boolean(),
+      botPolicy: z.string().nullable(),
+      connected: z.boolean(),
+      home: z.number().int().min(0).max(4),
+      /** Progress per token: `-1` yard, `0..56` on the board, `57` home. */
+      progress: z.array(z.number().int().min(-1).max(57)),
+    }),
+  ),
+  finishingOrder: z.array(z.number().int().min(1).max(4)),
+});
+export type LudoSnapshotMessage = z.infer<typeof ludoSnapshotMessageSchema>;

@@ -16,8 +16,14 @@ import type { MatchLogEntry } from "./match-log.js";
 export type MatchStatus = "scheduled" | "live" | "finished" | "void";
 
 /** A player sitting in a match. */
+/**
+ * A seat number. Carrom seats two, Ludo four, and the database allows 1 to 4, so
+ * one type covers both games and a room validates the count for its own game.
+ */
+export type SeatNumber = 1 | 2 | 3 | 4;
+
 export interface MatchSeat {
-  readonly seat: 1 | 2;
+  readonly seat: SeatNumber;
   readonly playerId: string;
   readonly displayName: string;
   readonly isBot: boolean;
@@ -32,16 +38,24 @@ export interface MatchSeat {
 
 /** The signed outcome of a finished match. */
 export interface MatchResult {
-  /** Seat 1 or 2, or null for a draw. */
-  readonly winnerSeat: 1 | 2 | null;
+  /** The winning seat, or null for a draw. */
+  readonly winnerSeat: SeatNumber | null;
+  /**
+   * Carrom's colours. Ludo has four seats and no colours, so it always records
+   * "tie" here and puts the truth in `finishingOrder`.
+   */
   readonly winnerColour: "white" | "black" | "tie";
   readonly scores: { readonly white: number; readonly black: number };
   readonly boards: number;
   readonly shots: number;
   /** Why the match ended. */
-  readonly reason: "scored" | "forfeit" | "board_limit";
+  readonly reason: "scored" | "forfeit" | "board_limit" | "finished" | "timeout";
   /** How much randomness the match drew from its seed. */
   readonly seedDraws: number;
+  /** Ludo: every seat, in the order it finished. Optional for a carrom match. */
+  readonly finishingOrder?: readonly SeatNumber[];
+  /** Ludo: tokens home per seat, indexed by seat minus one. */
+  readonly tokensHome?: readonly number[];
 }
 
 /** A whole match, with its seats. */
@@ -76,17 +90,21 @@ export interface ExistingPlayer {
 
 /** One seat to create: an existing player, a known player, or a bot to make. */
 export type CreateMatchSeat =
-  | { readonly seat: 1 | 2; readonly playerId: string }
-  | { readonly seat: 1 | 2; readonly existingPlayer: ExistingPlayer }
+  | { readonly seat: SeatNumber; readonly playerId: string }
+  | { readonly seat: SeatNumber; readonly existingPlayer: ExistingPlayer }
   | {
-      readonly seat: 1 | 2;
+      readonly seat: SeatNumber;
       readonly botLevel: BotLevel;
       readonly displayName?: string;
       readonly skill?: Readonly<Record<string, number>>;
+      /** Ludo: the published policy id, for example "cautious". */
+      readonly botPolicy?: string;
     };
 
 /** What the caller must supply to start a match. */
 export interface CreateMatchInput {
+  /** Which game. Defaults to carrom, which is what every existing caller means. */
+  readonly game?: "carrom" | "ludo";
   readonly seedCommit: string;
   readonly seats: readonly CreateMatchSeat[];
   readonly config?: Readonly<Record<string, unknown>>;
@@ -128,7 +146,7 @@ export interface MatchRepository {
    * Records that a seat connected, once. The tournament walkover rule reads
    * this: a human who never joined loses three minutes after the match was due.
    */
-  recordJoin(matchId: string, seat: 1 | 2, at: string): Promise<void>;
+  recordJoin(matchId: string, seat: SeatNumber, at: string): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -194,7 +212,7 @@ export class InMemoryMatchRepository implements MatchRepository {
         playerId: player.id,
         displayName: player.displayName,
         isBot: true,
-        botPolicy: player.botPolicy,
+        botPolicy: seat.botPolicy ?? player.botPolicy,
         botLevel: player.botLevel,
         profileId: null,
         skill: player.skill,
@@ -203,7 +221,7 @@ export class InMemoryMatchRepository implements MatchRepository {
 
     const match: MatchRecord = {
       id,
-      game: "carrom",
+      game: input.game ?? "carrom",
       status: "scheduled",
       seedCommit: input.seedCommit,
       seedReveal: null,
@@ -307,7 +325,7 @@ export class InMemoryMatchRepository implements MatchRepository {
     return [...(this.#events.get(matchId) ?? [])];
   }
 
-  async recordJoin(matchId: string, seat: 1 | 2, at: string): Promise<void> {
+  async recordJoin(matchId: string, seat: SeatNumber, at: string): Promise<void> {
     const match = this.require(matchId);
     // Only the first join counts: a reconnect must not reset the clock.
     if (seat === 1 && (match.seat1JoinedAt ?? null) === null) {
@@ -542,7 +560,7 @@ export class SupabaseMatchRepository implements MatchRepository {
     }
   }
 
-  async recordJoin(matchId: string, seat: 1 | 2, at: string): Promise<void> {
+  async recordJoin(matchId: string, seat: SeatNumber, at: string): Promise<void> {
     const column = seat === 1 ? "seat_1_joined_at" : "seat_2_joined_at";
     const updated = await this.#client
       .from("matches")

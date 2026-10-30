@@ -1,0 +1,511 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Watch a Ludo match - development</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #12100e;
+        --panel: #1c1917;
+        --line: #3f3a35;
+        --text: #f5f2ee;
+        --muted: #a8a29b;
+        --p1: #e0603c;
+        --p2: #3f8f5f;
+        --p3: #d8b23a;
+        --p4: #4b7dc4;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font:
+          14px/1.5 ui-sans-serif,
+          system-ui,
+          -apple-system,
+          "Segoe UI",
+          sans-serif;
+        display: grid;
+        grid-template-columns: minmax(320px, 620px) minmax(280px, 1fr);
+        gap: 20px;
+        padding: 20px;
+        min-height: 100vh;
+      }
+      @media (max-width: 900px) {
+        body {
+          grid-template-columns: 1fr;
+        }
+      }
+      h1 {
+        font-size: 15px;
+        margin: 0 0 4px;
+        font-weight: 600;
+      }
+      .sub {
+        color: var(--muted);
+        font-size: 12px;
+        margin: 0 0 12px;
+      }
+      canvas {
+        width: 100%;
+        height: auto;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        display: block;
+      }
+      .bar {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        margin: 12px 0;
+        flex-wrap: wrap;
+      }
+      button,
+      input {
+        font: inherit;
+        color: var(--text);
+        background: #262220;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 8px 12px;
+      }
+      button {
+        cursor: pointer;
+      }
+      button:hover {
+        border-color: #6b635a;
+      }
+      #status {
+        color: var(--muted);
+        font-size: 12px;
+        margin-left: auto;
+      }
+      .roll {
+        font-size: 13px;
+        color: var(--muted);
+      }
+      .roll b {
+        color: var(--text);
+        font-size: 16px;
+      }
+      .seats {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin-bottom: 14px;
+      }
+      .seat {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 10px 12px;
+        display: grid;
+        grid-template-columns: 12px 1fr auto;
+        gap: 10px;
+        align-items: center;
+      }
+      .seat.turn {
+        border-color: #7a7167;
+        box-shadow: 0 0 0 1px #7a7167 inset;
+      }
+      .dot {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+      }
+      .name {
+        font-weight: 600;
+      }
+      .meta {
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .pips {
+        display: flex;
+        gap: 3px;
+        justify-content: flex-end;
+      }
+      .pip {
+        width: 9px;
+        height: 9px;
+        border-radius: 2px;
+        background: #33302c;
+      }
+      .pip.on {
+        background: currentColor;
+      }
+      #log {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 10px 12px;
+        font:
+          12px/1.6 ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          monospace;
+        color: var(--muted);
+        max-height: 320px;
+        overflow: auto;
+      }
+      #log div.hit {
+        color: var(--text);
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Ludo - development viewer</h1>
+      <p class="sub">
+        The board is drawn from the room state: a 13-cell ring per side (52 cells), a
+        six-cell home lane per seat and a yard in each corner. Nothing here is a licensed
+        board; it is a schematic that shows exactly what the referee says.
+      </p>
+      <canvas id="board" width="620" height="620"></canvas>
+      <div class="bar">
+        <button id="start">Start a four bot match</button>
+        <input id="room" placeholder="or a room id" size="18" />
+        <button id="join">Watch</button>
+        <span id="status">idle</span>
+      </div>
+      <div class="roll" id="roll">no roll yet</div>
+    </main>
+    <aside>
+      <div class="seats" id="seats"></div>
+      <div id="log"></div>
+    </aside>
+
+    <script type="module">
+      const CLIENT_URL = "https://unpkg.com/colyseus@0.18.10/build/index.mjs";
+
+      import {
+        SAFE_CELLS,
+        buildRing,
+        pointFor,
+        yardSlot,
+      } from "./ludo-geometry.js";
+
+      const COLOURS = ["#e0603c", "#3f8f5f", "#d8b23a", "#4b7dc4"];
+      const SIZE = 620;
+      const RING = buildRing(SIZE);
+      const SAFE = new Set(SAFE_CELLS);
+
+      // ---------------------------------------------------------------------
+      // The board, redrawn from the last state the room sent.
+      // ---------------------------------------------------------------------
+
+      const canvas = document.getElementById("board");
+      const context = canvas.getContext("2d");
+
+      /** What the room last said. */
+      const view = {
+        seats: [],
+        turnSeat: 1,
+        roll: 0,
+        moveNumber: 0,
+        status: "playing",
+        finishingOrder: [],
+        /** An animation in flight: seat, token, from, to, started at. */
+        animation: null,
+      };
+
+      function draw() {
+        context.clearRect(0, 0, SIZE, SIZE);
+
+        // The ring.
+        for (const [index, cell] of RING.entries()) {
+          context.beginPath();
+          context.arc(cell.x, cell.y, 9, 0, Math.PI * 2);
+          context.fillStyle = SAFE.has(index) ? "#2c2825" : "#242120";
+          context.fill();
+          context.strokeStyle = "#3f3a35";
+          context.lineWidth = 1;
+          context.stroke();
+          if (index % 13 === 0) {
+            const seatIndex = index / 13;
+            context.beginPath();
+            context.arc(cell.x, cell.y, 4, 0, Math.PI * 2);
+            context.fillStyle = COLOURS[seatIndex];
+            context.fill();
+          }
+        }
+
+        // The home lanes.
+        for (let seatIndex = 0; seatIndex < 4; seatIndex += 1) {
+          for (let step = 51; step <= 56; step += 1) {
+            const point = pointFor(seatIndex, step, 0);
+            context.beginPath();
+            context.arc(point.x, point.y, 5, 0, Math.PI * 2);
+            context.fillStyle = COLOURS[seatIndex] + "55";
+            context.fill();
+          }
+        }
+
+        // The yards.
+        for (let seatIndex = 0; seatIndex < 4; seatIndex += 1) {
+          const colour = COLOURS[seatIndex];
+          for (let token = 0; token < 4; token += 1) {
+            const point = yardSlot(seatIndex, token);
+            context.beginPath();
+            context.arc(point.x, point.y, 9, 0, Math.PI * 2);
+            context.strokeStyle = colour + "55";
+            context.lineWidth = 1;
+            context.stroke();
+          }
+        }
+
+        // The tokens.
+        const now = performance.now();
+        const animation = view.animation;
+        let animationDone = false;
+
+        for (const seat of view.seats) {
+          const seatIndex = seat.seat - 1;
+          for (const [token, progress] of seat.progress.entries()) {
+            let point = pointFor(seatIndex, progress, token);
+            let lifted = false;
+
+            if (
+              animation !== null &&
+              animation.seatIndex === seatIndex &&
+              animation.token === token
+            ) {
+              const elapsed = (now - animation.startedAt) / 260;
+              const steps = animation.to - animation.from;
+              if (elapsed >= 1) {
+                animationDone = true;
+              } else {
+                const travelled = animation.from + steps * Math.max(0, elapsed);
+                const whole = Math.floor(travelled);
+                const fraction = travelled - whole;
+                const a = pointFor(seatIndex, whole, token);
+                const b = pointFor(seatIndex, whole + 1, token);
+                point = {
+                  x: a.x + (b.x - a.x) * fraction,
+                  y: a.y + (b.y - a.y) * fraction,
+                };
+                lifted = true;
+              }
+            }
+
+            context.beginPath();
+            context.arc(point.x, point.y, lifted ? 11 : 10, 0, Math.PI * 2);
+            context.fillStyle = COLOURS[seatIndex];
+            context.fill();
+            context.lineWidth = 2;
+            context.strokeStyle = "#12100e";
+            context.stroke();
+            context.fillStyle = "#12100e";
+            context.font = "bold 11px ui-sans-serif, system-ui, sans-serif";
+            context.textAlign = "center";
+            context.textBaseline = "middle";
+            context.fillText(String(token + 1), point.x, point.y + 0.5);
+          }
+        }
+
+        if (animationDone) {
+          view.animation = null;
+        }
+        if (view.animation !== null || view.seats.length === 0) {
+          requestAnimationFrame(draw);
+        }
+      }
+
+      // ---------------------------------------------------------------------
+      // The panels.
+      // ---------------------------------------------------------------------
+
+      function renderPanels() {
+        const seats = document.getElementById("seats");
+        seats.textContent = "";
+
+        for (const seat of view.seats) {
+          const row = document.createElement("div");
+          row.className = "seat" + (seat.seat === view.turnSeat ? " turn" : "");
+
+          const dot = document.createElement("span");
+          dot.className = "dot";
+          dot.style.background = COLOURS[seat.seat - 1];
+
+          const name = document.createElement("div");
+          const title = document.createElement("div");
+          title.className = "name";
+          title.textContent = `${seat.displayName}${seat.isBot ? "" : " (human)"}`;
+          const meta = document.createElement("div");
+          meta.className = "meta";
+          meta.textContent = `seat ${seat.seat}${seat.botPolicy ? ` · ${seat.botPolicy}` : ""}${
+            seat.connected ? "" : " · disconnected"
+          }`;
+          name.append(title, meta);
+
+          const pips = document.createElement("div");
+          pips.className = "pips";
+          pips.style.color = COLOURS[seat.seat - 1];
+          for (let index = 0; index < 4; index += 1) {
+            const pip = document.createElement("span");
+            pip.className = "pip" + (index < seat.home ? " on" : "");
+            pips.append(pip);
+          }
+
+          row.append(dot, name, pips);
+          seats.append(row);
+        }
+
+        document.getElementById("roll").innerHTML =
+          view.roll === 0
+            ? "no roll yet"
+            : `roll <b>${view.roll}</b> · seat ${view.turnSeat} to play · move ${view.moveNumber}`;
+      }
+
+      function log(line, hit = false) {
+        const box = document.getElementById("log");
+        const entry = document.createElement("div");
+        if (hit) {
+          entry.className = "hit";
+        }
+        entry.textContent = line;
+        box.append(entry);
+        box.scrollTop = box.scrollHeight;
+        while (box.childElementCount > 300) {
+          box.firstElementChild?.remove();
+        }
+      }
+
+      // ---------------------------------------------------------------------
+      // The stream.
+      // ---------------------------------------------------------------------
+
+      let room = null;
+
+      function adoptSnapshot(message) {
+        view.seats = message.seats ?? [];
+        view.turnSeat = message.turnSeat;
+        view.roll = message.roll;
+        view.moveNumber = message.moveNumber;
+        view.status = message.status;
+        view.finishingOrder = message.finishingOrder ?? [];
+        renderPanels();
+        draw();
+      }
+
+      function onMessage(type, payload) {
+        if (type === "snapshot") {
+          adoptSnapshot(payload);
+          log(`snapshot: ${payload.seats.length} seats, move ${payload.moveNumber}`, true);
+          return;
+        }
+        if (type === "roll") {
+          view.roll = payload.roll;
+          view.turnSeat = payload.seat;
+          renderPanels();
+          draw();
+          log(
+            `roll ${payload.roll} for seat ${payload.seat}` +
+              (payload.forfeited
+                ? " (third six, turn forfeited)"
+                : ` · choices: ${payload.tokens.join(", ") || "none"}`),
+          );
+          return;
+        }
+        if (type === "move") {
+          view.moveNumber = payload.moveNumber;
+          view.turnSeat = payload.turnSeat;
+          if (payload.token !== null && payload.from !== null && payload.to !== null) {
+            view.animation = {
+              seatIndex: payload.seat - 1,
+              token: payload.token,
+              from: payload.from,
+              to: payload.to,
+              startedAt: performance.now(),
+            };
+            requestAnimationFrame(draw);
+          }
+          const seat = view.seats.find((entry) => entry.seat === payload.seat);
+          if (seat !== undefined && payload.to === 57) {
+            seat.home = Math.min(4, seat.home + 1);
+          }
+          renderPanels();
+          log(
+            `seat ${payload.seat}: token ${payload.token === null ? "-" : payload.token + 1} ` +
+              `${payload.from} -> ${payload.to} [${payload.events.join(", ")}]`,
+          );
+          return;
+        }
+        if (type === "match_end") {
+          view.status = "finished";
+          log(
+            `match over: winner seat ${payload.winner ?? "-"}, order ${(payload.finishingOrder ?? []).join(", ")}`,
+            true,
+          );
+          document.getElementById("status").textContent = "finished";
+          return;
+        }
+        if (type === "welcome") {
+          log(`joined as ${payload.spectate ? "spectator" : "player"}`, true);
+          return;
+        }
+        if (type === "rejected") {
+          log(`rejected: ${payload.code ?? "unknown"}`);
+        }
+      }
+
+      async function watch(roomId) {
+        const module = await import(CLIENT_URL);
+        const Client = module.Client ?? module.default?.Client;
+        const protocol = location.protocol === "https:" ? "wss" : "ws";
+        const client = new Client(`${protocol}://${location.host}/colyseus`);
+
+        document.getElementById("status").textContent = `joining ${roomId}`;
+        room = await client.joinById(roomId, { spectate: true });
+
+        // One wildcard handler, registered before anything is awaited: the client
+        // flushes what arrived earlier at the moment the first handler attaches.
+        room.onMessage("*", (type, payload) => {
+          onMessage(String(type), payload);
+        });
+
+        document.getElementById("status").textContent = `watching ${room.roomId}`;
+      }
+
+      document.getElementById("start").addEventListener("click", async () => {
+        document.getElementById("status").textContent = "starting a match";
+        try {
+          const response = await fetch("/dev/start-ludo", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({}),
+          });
+          if (!response.ok) {
+            throw new Error(`start failed: ${String(response.status)}`);
+          }
+          const body = await response.json();
+          document.getElementById("room").value = body.roomId;
+          log(`match ${body.matchId}, verify with: ${body.verify}`, true);
+          await watch(body.roomId);
+        } catch (error) {
+          document.getElementById("status").textContent = String(error.message ?? error);
+        }
+      });
+
+      document.getElementById("join").addEventListener("click", async () => {
+        const roomId = document.getElementById("room").value.trim();
+        if (roomId === "") {
+          return;
+        }
+        try {
+          await watch(roomId);
+        } catch (error) {
+          document.getElementById("status").textContent = String(error.message ?? error);
+        }
+      });
+
+      draw();
+    </script>
+  </body>
+</html>
