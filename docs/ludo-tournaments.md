@@ -37,36 +37,72 @@ A heat cannot be expressed inside those four shapes without lying about one of
 them: two "heats" sharing a match id is not a schedule, and a finishing order
 compressed into a winner field is not a result. Hence: schema first.
 
-## The schema change (migration `010_ludo_heats.sql`)
+## The schema change: `supabase/migrations/010_ludo_heats.sql`
 
-The smallest change that keeps the existing formats untouched:
+Written and verified against a throwaway Postgres 15, not yet applied to the live
+project. What it does:
 
 ```sql
--- One row per entrant in a position, ordered by the seat they occupy.
 create table tournament_match_entrants (
   id                   uuid primary key default gen_random_uuid(),
-  tournament_match_id  uuid not null references tournament_matches(id) on delete cascade,
+  tournament_match_id  uuid not null references tournament_matches (id) on delete cascade,
+  tournament_id        uuid not null references tournaments (id) on delete cascade,
   seat                 smallint not null check (seat between 1 and 4),
-  player_id            uuid not null references profiles(id),
-  entry_id             uuid not null references tournament_entries(id),
+  player_id            uuid not null references players (id) on delete cascade,
   place                smallint check (place between 1 and 4),  -- null until decided
   created_at           timestamptz not null default now(),
   unique (tournament_match_id, seat),
   unique (tournament_match_id, player_id)
 );
 
--- The order the referee reported, for the positions that use it.
 alter table tournament_matches
-  add column finishing_order uuid[] ,
-  add column format_seats smallint not null default 2
-    check (format_seats between 2 and 4);
+  add column format_seats smallint not null default 2 check (format_seats between 2 and 4),
+  add column finishing_order uuid[];
 
--- seat1_player_id and seat2_player_id stay: a two-seat format writes them and the
--- entrants table is maintained in step, so existing reads and the API keep working.
+alter table tournaments
+  add column advance_per_heat smallint not null default 2 check (advance_per_heat between 1 and 3);
 ```
 
-Loading the entrants instead of the two columns is a projection, not a migration:
-`loadBracket` reads entrants when `format_seats > 2` and the columns otherwise.
+Three details that are not obvious:
+
+- **An entrant's entry has no id to point at.** `tournament_entries` is keyed
+  `(tournament_id, player_id)`, and 008 never gave it a surrogate key, so the
+  entrants table carries the pair and does not foreign-key it: a bot filled in at
+  launch has no entry at all, and a `not null` pair would have refused to hold the
+  seat it plays.
+- **`place` is unique per position when set.** A partial unique index
+  (`where place is not null`) stops two entrants tying for a place without
+  refusing a position that has not been decided yet.
+- **One writer, no trigger.** Two-seat positions keep their seat columns and get a
+  matching pair of entrant rows; heats write entrant rows only. A trigger mirroring
+  one into the other would fire during the scheduler's own advancement, which is
+  the one place a bracket must not rewrite itself mid-decision.
+
+The `tournaments.format` constraint is dropped and recreated to allow `heats`
+(004 had already allowed `swiss`, which no format implements).
+
+## What was verified, and how
+
+The migration was applied to a scratch cluster with a Supabase-shaped scaffold
+(`auth.users`, `auth.uid()`, the `anon`/`authenticated`/`service_role` roles, and a
+`supabase_realtime` publication), after 001 through 009:
+
+1. **It runs.** Migrations 001 to 010 apply with `ON_ERROR_STOP` and no errors.
+2. **It is idempotent.** Running 010 a second time changes nothing and reports no
+   error beyond the expected "policy does not exist, skipping".
+3. **The backfill mirrors.** A finished two-seat position inserted before the
+   re-run produced two entrant rows with places 1 and 2.
+4. **A heat works end to end.** A four-seat position took four entrants, four
+   places, and a `finishing_order` array of length four; the top two came back in
+   finishing order with one query.
+5. **Every constraint bites.** A duplicate place, a fifth seat, `format_seats = 5`,
+   `advance_per_heat = 4` and an unknown format each raise; `format = 'heats'` is
+   accepted.
+6. **Access matches the bracket table.** `anon` reads the entrants and cannot
+   write them.
+
+`supabase/migrations/009_money_extras.sql` is applied to the live project;
+`010_ludo_heats.sql` is not.
 
 ## The code that follows
 
@@ -100,8 +136,13 @@ Loading the entrants instead of the two columns is a projection, not a migration
 5. `resolvePosition` on a two-seat position is unchanged: the existing 36
    tournament tests pass without edits.
 
-## Decision needed
+## Where this stands
 
-The migration is the gate. Run it (or say the word and I will write it), and the
-heats format lands with the tests above. Until then Ludo runs the two-seat formats,
-which is honest about the schedule but does not use the board's four seats.
+The migration is written; the code is not. Applying 010 on its own changes nothing
+for anyone: no code reads the new table yet, so the two-seat formats keep running
+exactly as they do now. The heats format lands next, with the tests above, once the
+column is in the live database.
+
+Until then Ludo runs the two-seat formats. That is honest about the schedule - every
+match that exists is a real bracket position with two entrants - but it does not use
+the board's four seats.

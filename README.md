@@ -508,10 +508,13 @@ re-chained before it is offered.
 construction: `tournament_matches` has `seat1_player_id` and `seat2_player_id`,
 `PositionSeat` is `1 | 2`, and the scheduler advances a winner into one seat of one
 later position. A four-seat heat needs a place for four entrants, a finishing order
-and an advancement rule that takes the top two, which is a schema change (migration
-`010_ludo_heats.sql`) before it is a code change. Ludo tournaments therefore run as
-the two-seat formats for now, and a Ludo match inside a tournament is a two-player
-one. See `docs/ludo-tournaments.md`.
+and an advancement rule that takes the top two, which is a schema change before it is
+a code change. `supabase/migrations/010_ludo_heats.sql` is written and verified
+against a scratch Postgres, and is **not yet applied** to the live project: it adds
+`tournament_match_entrants`, `format_seats`, `finishing_order` and
+`advance_per_heat`, and mirrors every existing position into the new table. Ludo
+tournaments run the two-seat formats until it is applied and the format lands. See
+`docs/ludo-tournaments.md`.
 
 **What to watch out for.** The browser client takes the *origin* as its endpoint
 (`new Client("ws://host")`), not the socket path: the SDK appends `matchmake/...` to
