@@ -78,7 +78,13 @@ describe("frame quantisation", () => {
     const raw = {
       fps: 30,
       frames: [
-        { t: 0, bodies: [{ id: "white-1", x: 100, y: 200 }, { id: "black-1", x: 300, y: 400 }] },
+        {
+          t: 0,
+          bodies: [
+            { id: "white-1", x: 100, y: 200 },
+            { id: "black-1", x: 300, y: 400 },
+          ],
+        },
         // white-1 was pocketed: it is gone from this frame entirely.
         { t: 0.033, bodies: [{ id: "black-1", x: 310, y: 410 }] },
       ],
@@ -160,7 +166,14 @@ describe("the shot message", () => {
       shotNumber: 1,
       seat: 1,
       events: [],
-      nextState: { board: 1, turn: "white", phase: "aiming", shotNumber: 1, scores: { white: 0, black: 0 }, queue: [] },
+      nextState: {
+        board: 1,
+        turn: "white",
+        phase: "aiming",
+        shotNumber: 1,
+        scores: { white: 0, black: 0 },
+        queue: [],
+      },
     });
 
     expect(parsed.success).toBe(false);

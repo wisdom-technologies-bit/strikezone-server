@@ -41,27 +41,27 @@ Copy .env.example to .env and fill in every value (see README.md).
 
 ## Scripts
 
-| Script                             | What it does                                       |
-| ---------------------------------- | -------------------------------------------------- |
-| `npm run dev`                      | `tsx watch` on `src/index.ts` (restarts on change) |
-| `npm run build`                    | Type-check and compile `src` to `dist`             |
-| `npm start`                        | Run the compiled server from `dist`                |
-| `npm test`                         | Vitest, single run                                 |
-| `npm run test:watch`               | Vitest in watch mode                               |
-| `npm run lint`                     | ESLint                                             |
-| `npm run format`                   | Prettier write                                     |
-| `npm run typecheck`                | `tsc --noEmit` over sources and tests              |
-| `npm run verify-match -- <id>`     | Re-check a finished match from the database        |
-| `npm run carrom:watch -- <roomId>` | Spectate a live room from the terminal             |
-| `npm run odds:calibrate`           | Re-measure the Carrom shot table                   |
-| `npm run odds:validate`            | Fast odds model against the real engine            |
-| `npm run odds:backtest`            | Score the model against finished matches           |
-| `npm run tournament:demo`          | Create, play out and print a whole tournament      |
-| `npm run money:demo`               | Top up, bet, settle and reconcile, in memory       |
-| `npm run ludo:demo`                | Play a four bot Ludo match and verify it           |
+| Script                             | What it does                                        |
+| ---------------------------------- | --------------------------------------------------- |
+| `npm run dev`                      | `tsx watch` on `src/index.ts` (restarts on change)  |
+| `npm run build`                    | Type-check and compile `src` to `dist`              |
+| `npm start`                        | Run the compiled server from `dist`                 |
+| `npm test`                         | Vitest, single run                                  |
+| `npm run test:watch`               | Vitest in watch mode                                |
+| `npm run lint`                     | ESLint                                              |
+| `npm run format`                   | Prettier write                                      |
+| `npm run typecheck`                | `tsc --noEmit` over sources and tests               |
+| `npm run verify-match -- <id>`     | Re-check a finished match from the database         |
+| `npm run carrom:watch -- <roomId>` | Spectate a live room from the terminal              |
+| `npm run odds:calibrate`           | Re-measure the Carrom shot table                    |
+| `npm run odds:validate`            | Fast odds model against the real engine             |
+| `npm run odds:backtest`            | Score the model against finished matches            |
+| `npm run tournament:demo`          | Create, play out and print a whole tournament       |
+| `npm run money:demo`               | Top up, bet, settle and reconcile, in memory        |
+| `npm run ludo:demo`                | Play a four bot Ludo match and verify it            |
 | `npm run ludo:watch`               | Run the server on an in-memory store for the viewer |
-| `npm run ludo:bench`               | Measure the Ludo engine and the simulator          |
-| `npm run contract:check`           | Compile the contract file on its own               |
+| `npm run ludo:bench`               | Measure the Ludo engine and the simulator           |
+| `npm run contract:check`           | Compile the contract file on its own                |
 
 ## Environment variables
 
@@ -329,6 +329,73 @@ The concurrency check is the one worth reading: a hundred players bet at once on
 a house with 1,000,000 kobo of free cash, and exactly the number of bets the cap
 allows are accepted, with exposure stopping on the boundary rather than past it.
 
+## Operations
+
+Five things an operator does, and where each one lives.
+
+### The operator API
+
+Every route is behind `x-admin-key` (constant time over SHA-256 digests, ten wrong
+keys from one address lock it out for fifteen minutes and raise a critical alert),
+and every call writes an audit row with the path, status, actor and request id.
+
+| Route                                                    | What it does                                                                                                                                               |
+| -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/admin/overview`                                | live matches, exposure per match and in total, free bankroll, pending reviews, flagged matches, active tournaments, open alerts, whether betting is paused |
+| `GET /api/admin/health-deep`                             | database latency, live matches, the last reprice of each, scheduler leases, worker pool, open alerts                                                       |
+| `GET /api/admin/audit-log`                               | the audit trail, filtered by action, target type, target id                                                                                                |
+| `GET /api/admin/alerts`                                  | open alerts, newest first                                                                                                                                  |
+| `GET /api/admin/bots`, `GET /api/admin/bots/:id/history` | the bots and their published numbers                                                                                                                       |
+| `POST /api/admin/bots/:id/publish`                       | publish a bot's numbers; visible in its public history                                                                                                     |
+| `POST /api/admin/markets/suspend`                        | suspend or resume one market of one match                                                                                                                  |
+| `POST /api/admin/markets/override`                       | a market type's stake ceiling and margin                                                                                                                   |
+| `POST /api/admin/users/:id/self-exclusion`               | set or lift a self-exclusion                                                                                                                               |
+| `POST /api/admin/users/:id/kyc`                          | mark an identity check                                                                                                                                     |
+| `POST /api/admin/users/:id/freeze`                       | freeze an account, or thaw it                                                                                                                              |
+| `POST /api/admin/money/betting/pause`                    | stop every new bet, across restarts                                                                                                                        |
+
+The money routes (top-up, solvency, reconcile, withdrawals, held payouts, pause)
+are in `src/api/admin-money.ts` and the tournament controls in
+`src/api/admin-tournaments.ts`.
+
+### Security
+
+- Helmet, with the cross-origin resource policy set to `same-site`.
+- A global per-address rate limit (600/min by default) in front of every route,
+  plus the tighter per-route limits the public reads already had.
+- The CORS and WebSocket origin allowlists (`SITE_ORIGIN`), re-asserted after
+  Colyseus installs its own listener.
+- A body ceiling (`BODY_LIMIT_KB`) and per-message caps in both rooms: a message
+  over `MAX_MESSAGE_BYTES` is refused, and a client sending more than
+  `MAX_MESSAGES_PER_SECOND` is disconnected after five refusals in a minute.
+- A UUID request id on every response, in every log line and in the error body.
+- A production start that refuses `ADMIN_API_KEY` under 32 characters or a
+  missing `RESULT_SIGNING_SECRET`.
+- `npm run audit` fails on a high-severity advisory in a production dependency.
+
+### Monitoring
+
+`alerts` rows are written **before** the webhook is posted, so a lost POST never
+loses the alert. Three conditions raise one today: the free bankroll below
+`ALERT_FREE_BANKROLL_MINOR` (critical), a settlement that failed (critical, with
+the failing check), and an admin lockout (critical, with the address). Sentry is
+loaded through a dynamic import: without `SENTRY_DSN` or without the package
+installed, nothing is sent and nothing fails.
+
+### Deploying
+
+One instance, always warm, because the matchmaker's room list, the lockout
+counters and the worker pool live in the process. `railway.json`, `fly.toml` and
+`render.yaml` all describe that single instance; `docs/DEPLOY.md` has the
+migrations, the secrets to generate, the post-deploy checks and the ops runbook.
+
+### Load testing
+
+`npm run loadtest -- --url http://localhost:2567 --seconds 20 --concurrency 50`
+reports throughput and p50/p95/p99 over the real public reads, plus games a second
+through the simulator. `docs/LOAD_TEST.md` has the budgets and how to read the
+output.
+
 ## Task log
 
 ### Scaffold - project skeleton, config, health and readiness
@@ -516,7 +583,7 @@ against a scratch Postgres, and is **not yet applied** to the live project: it a
 tournaments run the two-seat formats until it is applied and the format lands. See
 `docs/ludo-tournaments.md`.
 
-**What to watch out for.** The browser client takes the *origin* as its endpoint
+**What to watch out for.** The browser client takes the _origin_ as its endpoint
 (`new Client("ws://host")`), not the socket path: the SDK appends `matchmake/...` to
 whatever path it is given and the matchmaker is mounted at the root, so
 `ws://host/colyseus` answers 404 to every join. Both dev pages had that bug and both

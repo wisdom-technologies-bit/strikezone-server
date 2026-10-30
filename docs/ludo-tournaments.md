@@ -10,12 +10,12 @@ A Ludo heat seats up to four entrants in one match. The match produces a finishi
 order (the referee's `finishingOrder`), and the heats format advances the first two
 to the next round. Compared with the two-seat knockouts already supported:
 
-| | two-seat knockout | four-seat heat |
-| --- | --- | --- |
-| Entrants per position | 2 | 2 to 4 |
-| How a position resolves | winner and loser | a finishing order for everyone |
-| Who advances | the winner, one seat | the top `advancePerHeat`, several seats |
-| Byes | an empty seat | an under-filled heat |
+|                         | two-seat knockout    | four-seat heat                          |
+| ----------------------- | -------------------- | --------------------------------------- |
+| Entrants per position   | 2                    | 2 to 4                                  |
+| How a position resolves | winner and loser     | a finishing order for everyone          |
+| Who advances            | the winner, one seat | the top `advancePerHeat`, several seats |
+| Byes                    | an empty seat        | an under-filled heat                    |
 
 ## Why it is blocked, precisely
 

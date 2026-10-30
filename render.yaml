@@ -1,0 +1,61 @@
+# Render deployment for strikezone-server.
+#
+# A single instance, always warm. The free plan spins down on idle, which kills
+# live rooms and leaves bets on a match nobody is playing: use a paid instance
+# type. Secrets are marked sync: false and are entered in the dashboard.
+
+services:
+  - type: web
+    name: strikezone-server
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    region: frankfurt
+    healthCheckPath: /health
+    autoDeploy: false
+    numInstances: 1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "2567"
+      - key: SITE_ORIGIN
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: RESULT_SIGNING_SECRET
+        sync: false
+      - key: ADMIN_API_KEY
+        sync: false
+      - key: MONEY_MODE
+        value: virtual
+      - key: CURRENCY
+        value: NGN
+      - key: HOUSE_MARGIN_BPS
+        value: "600"
+      - key: MAX_SPECTATORS_PER_ROOM
+        value: "2000"
+      - key: SPECTATOR_JOIN_PER_MINUTE
+        value: "60"
+      - key: PUBLIC_API_RATE_PER_MINUTE
+        value: "120"
+      - key: GLOBAL_RATE_PER_MINUTE
+        value: "600"
+      - key: BODY_LIMIT_KB
+        value: "100"
+      - key: ADMIN_LOCKOUT_THRESHOLD
+        value: "10"
+      - key: ADMIN_LOCKOUT_MS
+        value: "900000"
+      - key: ALERT_FREE_BANKROLL_MINOR
+        value: "1000000"
+      - key: MAX_MESSAGE_BYTES
+        value: "4096"
+      - key: MAX_MESSAGES_PER_SECOND
+        value: "20"
+      - key: ALERT_WEBHOOK_URL
+        sync: false
+      - key: SENTRY_DSN
+        sync: false

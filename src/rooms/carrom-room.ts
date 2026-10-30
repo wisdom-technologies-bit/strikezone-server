@@ -7,6 +7,7 @@ import { matchRepository } from "../lib/match-store.js";
 import type { MatchRecord, MatchRepository, MatchResult } from "../lib/match-repository.js";
 import { supabase } from "../lib/supabase.js";
 import { logger } from "../lib/logger.js";
+import { createMessageGuard, VIOLATIONS_BEFORE_LEAVE, type MessageGuard } from "./message-guard.js";
 import { isShuttingDown } from "../lib/lifecycle.js";
 import { publish } from "../lib/events.js";
 import {
@@ -312,13 +313,39 @@ export class CarromRoom extends Room<{ state: CarromRoomStateInstance }> {
       },
     });
 
+    // A shot is a handful of numbers. Anything larger, or anything arriving faster
+    // than a person can aim, is refused before the runner sees it, and a client
+    // that keeps it up is disconnected rather than allowed to occupy the room.
+    const shotGuard = createMessageGuard();
+
     this.onMessage("shot", (client, raw: unknown) => {
+      if (!this.#messageAllowed(shotGuard, client, raw)) {
+        return;
+      }
       void this.#onShot(client, raw);
     });
 
     const runner = this.#runner;
     await runner.start();
     logger.info({ matchId: match.id, roomId: this.roomId }, "carrom room created");
+  }
+
+  /** Refuses a message the guard rejects, and hangs up on a repeat offender. */
+  #messageAllowed(guard: MessageGuard, client: Client, raw: unknown): boolean {
+    const verdict = guard.check(client.sessionId, raw);
+    if (verdict === "ok") {
+      return true;
+    }
+
+    logger.warn(
+      { matchId: this.#match?.id ?? null, roomId: this.roomId, verdict },
+      "refused a room message",
+    );
+
+    if (guard.violations(client.sessionId) >= VIOLATIONS_BEFORE_LEAVE) {
+      client.leave(4008);
+    }
+    return false;
   }
 
   override async onAuth(

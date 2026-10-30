@@ -1,0 +1,41 @@
+# Fly.io deployment for strikezone-server.
+#
+# One machine, always on. A live match is in-memory state in the process that owns
+# the room, and Colyseus matchmaking answers from that same process, so a second
+# machine would hand a join request to a process that has never heard of the room.
+# Scale up the machine, not the count. See docs/DEPLOY.md.
+
+app = "strikezone-server"
+primary_region = "jnb"
+kill_signal = "SIGTERM"
+kill_timeout = "30s"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  PORT = "2567"
+
+[http_service]
+  internal_port = 2567
+  force_https = true
+  # A live match cannot be stopped and restarted behind a player's back.
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    grace_period = "15s"
+    interval = "15s"
+    method = "GET"
+    path = "/health"
+    timeout = "4s"
+
+[[vm]]
+  memory = "1gb"
+  cpu_kind = "shared"
+  cpus = 2
+
+[deploy]
+  strategy = "rolling"

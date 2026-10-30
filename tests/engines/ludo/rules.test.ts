@@ -58,7 +58,24 @@ const PROGRESS_ONE_LAP = 51;
 
 describe("leaving the yard", () => {
   it("needs a 6, and only a 6 offers the move", () => {
-    const state = stateWith([LUDO_YARD, LUDO_YARD, LUDO_YARD, LUDO_YARD, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1]);
+    const state = stateWith([
+      LUDO_YARD,
+      LUDO_YARD,
+      LUDO_YARD,
+      LUDO_YARD,
+      -1,
+      -1,
+      -1,
+      -1,
+      -1,
+      -1,
+      -1,
+      -1,
+      -1,
+      -1,
+      -1,
+      -1,
+    ]);
 
     expect(getLegalMoves(state, 5)).toHaveLength(0);
     expect(getLegalMoves(state, 3)).toHaveLength(0);
@@ -361,7 +378,9 @@ describe("the board", () => {
   });
 
   it("refuses a configuration that is not Ludo", () => {
-    expect(() => resolveLudoConfig({ players: 3 as unknown as 2 })).toThrow(/players must be 2 or 4/u);
+    expect(() => resolveLudoConfig({ players: 3 as unknown as 2 })).toThrow(
+      /players must be 2 or 4/u,
+    );
     expect(() => resolveLudoConfig({ diceSides: 8 })).toThrow(/6-sided/u);
   });
 

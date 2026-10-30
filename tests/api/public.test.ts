@@ -103,7 +103,15 @@ function fakeQueries(): PublicQueries & { calls: Map<string, number> } {
     leaderboard: () => {
       count("leaderboard");
       return Promise.resolve([
-        { rank: 1, playerId: PLAYER_ID, displayName: "Ada", isBot: false, rating: 1200, played: 3, won: 2 },
+        {
+          rank: 1,
+          playerId: PLAYER_ID,
+          displayName: "Ada",
+          isBot: false,
+          rating: 1200,
+          played: 3,
+          won: 2,
+        },
       ]);
     },
     tournaments: () => Promise.resolve([]),
@@ -144,16 +152,19 @@ let clock = 1_000_000;
 function buildApp(queries: PublicQueries, ratePerMinute = 100): Express {
   const app = express();
   app.use(express.json());
-  app.use(
-    ...createPublicGuards({ ratePerMinute, cacheTtlMs: 2_000, now: () => clock }),
-  );
+  app.use(...createPublicGuards({ ratePerMinute, cacheTtlMs: 2_000, now: () => clock }));
   app.use(
     createPublicRouter({
       verifyUser: (token: string) => Promise.resolve(token === "good-token" ? USER : null),
     }),
   );
   app.use(
-    (error: unknown, _request: express.Request, response: express.Response, _next: express.NextFunction) => {
+    (
+      error: unknown,
+      _request: express.Request,
+      response: express.Response,
+      _next: express.NextFunction,
+    ) => {
       response.status(500).json({ ok: false, error: String(error) });
     },
   );
@@ -278,7 +289,9 @@ describe("the public API", () => {
     expect(wallet.status).toBe(401);
     expect(wallet.body.error).toBe("missing_token");
 
-    const transactions = await request(app).get("/api/me/transactions").set("authorization", "Bearer nope");
+    const transactions = await request(app)
+      .get("/api/me/transactions")
+      .set("authorization", "Bearer nope");
     expect(transactions.status).toBe(401);
     expect(transactions.body.error).toBe("invalid_token");
   });
@@ -286,7 +299,9 @@ describe("the public API", () => {
   it("serves the signed-in player's wallet and transactions, never from the cache", async () => {
     const app = buildApp(queries);
 
-    const wallet = await request(app).get("/api/me/wallet").set("authorization", "Bearer good-token");
+    const wallet = await request(app)
+      .get("/api/me/wallet")
+      .set("authorization", "Bearer good-token");
     expect(wallet.status).toBe(200);
     expect(walletResponseSchema.safeParse(wallet.body).success).toBe(true);
     expect(wallet.headers["x-cache"]).toBeUndefined();

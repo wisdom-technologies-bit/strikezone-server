@@ -29,13 +29,13 @@ empty. In a four player match all four seats are used, starting at 0, 13, 26, 39
 
 Each token's position is one number, its **progress**:
 
-| Progress | Meaning |
-| --- | --- |
-| `-1` | in the yard |
-| `0` | on its own starting cell |
-| `0` to `50` | on the ring, `51` cells in all |
+| Progress     | Meaning                           |
+| ------------ | --------------------------------- |
+| `-1`         | in the yard                       |
+| `0`          | on its own starting cell          |
+| `0` to `50`  | on the ring, `51` cells in all    |
 | `51` to `56` | in its own home column, six cells |
-| `57` | home, finished |
+| `57`         | home, finished                    |
 
 Ring cell for a token at progress `p` on seat `s` is `(start(s) + p) mod 52`. So
 progress counts steps taken since leaving the yard, which makes capture, safety
@@ -51,8 +51,7 @@ free (see the benchmark in `npm run ludo:bench`).
 
 ### Leaving the yard
 
-A token leaves the yard only on a **6**, landing on its starting cell at progress
-0. That is the whole move: the 6 is spent bringing the token out, and the token
+A token leaves the yard only on a **6**, landing on its starting cell at progress 0. That is the whole move: the 6 is spent bringing the token out, and the token
 does not then advance six cells. If every token is in the yard, a roll of 6 is the
 only move available and the only legal moves are the yard tokens.
 

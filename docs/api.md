@@ -77,8 +77,22 @@ or void, newest first. Query: `limit` (1-100, default 20), `cursor`, and optiona
       "startedAt": "2026-10-30T10:00:00.000Z",
       "endedAt": null,
       "players": [
-        { "seat": 1, "playerId": null, "displayName": "Master Bot", "isBot": true, "botLevel": "master", "score": 12 },
-        { "seat": 2, "playerId": null, "displayName": "Club Bot", "isBot": true, "botLevel": "club", "score": 8 }
+        {
+          "seat": 1,
+          "playerId": null,
+          "displayName": "Master Bot",
+          "isBot": true,
+          "botLevel": "master",
+          "score": 12
+        },
+        {
+          "seat": 2,
+          "playerId": null,
+          "displayName": "Club Bot",
+          "isBot": true,
+          "botLevel": "club",
+          "score": 8
+        }
       ],
       "scores": { "white": 12, "black": 8 },
       "roomId": "11111111-1111-4111-8111-111111111111"
@@ -155,7 +169,15 @@ Query: `limit` (1-100, default 25), `bots=include|exclude|only`.
 {
   "ok": true,
   "entries": [
-    { "rank": 1, "playerId": "22222222-2222-4222-8222-222222222222", "displayName": "Ada", "isBot": false, "rating": 1200, "played": 3, "won": 2 }
+    {
+      "rank": 1,
+      "playerId": "22222222-2222-4222-8222-222222222222",
+      "displayName": "Ada",
+      "isBot": false,
+      "rating": 1200,
+      "played": 3,
+      "won": 2
+    }
   ]
 }
 ```
@@ -220,14 +242,16 @@ import { Client } from "colyseus.js";
 
 const client = new Client("wss://<host>/colyseus");
 const room = await client.joinById(matchId, { spectate: true }); // no token needed
-room.onMessage("*", (type, payload) => { /* see below */ });
+room.onMessage("*", (type, payload) => {
+  /* see below */
+});
 ```
 
 A spectator receives, in this order:
 
 1. `welcome` - once, on join.
 2. `snapshot` - once, the full state. A viewer that joins mid-shot gets this
-   *after* that shot completes, and is sent no frames before it.
+   _after_ that shot completes, and is sent no frames before it.
 3. `shot` - once per shot, in order, with the recording.
 4. `match_end` - once, when the match is over.
 
@@ -258,7 +282,15 @@ spectator may not send shots at all).
   "queenPendingSeat": 0,
   "scores": { "white": 12, "black": 8 },
   "seats": [
-    { "seat": 1, "playerId": null, "displayName": "Master Bot", "isBot": true, "botLevel": "master", "score": 12, "connected": true }
+    {
+      "seat": 1,
+      "playerId": null,
+      "displayName": "Master Bot",
+      "isBot": true,
+      "botLevel": "master",
+      "score": 12,
+      "connected": true
+    }
   ],
   "coins": [{ "id": "white-1", "colour": "white", "x": 120.5, "y": 300.25 }],
   "seedCommit": "ababab..."
@@ -272,7 +304,9 @@ spectator may not send shots at all).
   "type": "shot",
   "shotNumber": 13,
   "seat": 1,
-  "events": [{ "type": "coin_pocketed", "shot": 13, "coin": "white", "creditedTo": "white", "by": "white" }],
+  "events": [
+    { "type": "coin_pocketed", "shot": 13, "coin": "white", "creditedTo": "white", "by": "white" }
+  ],
   "frames": {
     "fps": 30,
     "bodyIds": ["white-1", "black-1", "queen", "striker"],
@@ -303,7 +337,7 @@ spectator may not send shots at all).
 import { decodeFrames, frameBodies, positionAt } from "./contract.ts";
 
 const decoded = decodeFrames(message.frames);
-const bodies = frameBodies(decoded, 10);        // every body in frame 10
+const bodies = frameBodies(decoded, 10); // every body in frame 10
 const striker = positionAt(decoded, 10, "striker");
 ```
 
@@ -343,19 +377,23 @@ The website subscribes to these tables for live odds, scores and the player's ow
 money. Row level security already limits what an anonymous or signed-in session
 can read; the service role is never used in the browser.
 
-| Table | What to subscribe to | Why |
-| --- | --- | --- |
-| `markets` | `postgres_changes` on `UPDATE` and `INSERT`, filtered by `match_id` | odds moved, a market suspended, a market settled |
-| `matches` | `postgres_changes` on `UPDATE`, filtered by `id` | the score, the status, and `seed_reveal` appearing at the end |
-| `tournament_matches` | `postgres_changes` on `UPDATE`, filtered by `tournament_id` | a bracket slot filled, a match advanced |
-| `bets` | `postgres_changes` on `INSERT`/`UPDATE`, filtered by `user_id = auth.uid()` | the player's own bets, including a payout held for review |
+| Table                | What to subscribe to                                                        | Why                                                           |
+| -------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| `markets`            | `postgres_changes` on `UPDATE` and `INSERT`, filtered by `match_id`         | odds moved, a market suspended, a market settled              |
+| `matches`            | `postgres_changes` on `UPDATE`, filtered by `id`                            | the score, the status, and `seed_reveal` appearing at the end |
+| `tournament_matches` | `postgres_changes` on `UPDATE`, filtered by `tournament_id`                 | a bracket slot filled, a match advanced                       |
+| `bets`               | `postgres_changes` on `INSERT`/`UPDATE`, filtered by `user_id = auth.uid()` | the player's own bets, including a payout held for review     |
 
 ```js
 supabase
   .channel(`markets:${matchId}`)
-  .on("postgres_changes", { event: "*", schema: "public", table: "markets", filter: `match_id=eq.${matchId}` }, (payload) => {
-    renderMarket(payload.new);
-  })
+  .on(
+    "postgres_changes",
+    { event: "*", schema: "public", table: "markets", filter: `match_id=eq.${matchId}` },
+    (payload) => {
+      renderMarket(payload.new);
+    },
+  )
   .subscribe();
 ```
 

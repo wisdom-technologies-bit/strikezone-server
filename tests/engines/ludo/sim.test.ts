@@ -80,10 +80,12 @@ describe("the shape of a game", () => {
         turns += 1;
       }
       expect(simulator.status).toBe("finished");
-      expect(simulator.finishingOrder()).toEqual([0, 1, 2, 3].sort((left, right) => {
-        const order = simulator.finishingOrder();
-        return order.indexOf(left) - order.indexOf(right);
-      }));
+      expect(simulator.finishingOrder()).toEqual(
+        [0, 1, 2, 3].sort((left, right) => {
+          const order = simulator.finishingOrder();
+          return order.indexOf(left) - order.indexOf(right);
+        }),
+      );
       expect([...simulator.finishingOrder()].sort()).toEqual([0, 1, 2, 3]);
     }
   }, 30_000);

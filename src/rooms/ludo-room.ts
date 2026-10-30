@@ -18,6 +18,7 @@ import { logger } from "../lib/logger.js";
 import { isShuttingDown } from "../lib/lifecycle.js";
 import type { MatchRecord, MatchRepository, SeatNumber } from "../lib/match-repository.js";
 import { LUDO_MOVE_SECONDS } from "./ludo-match-runner.js";
+import { createMessageGuard, VIOLATIONS_BEFORE_LEAVE, type MessageGuard } from "./message-guard.js";
 
 /**
  * The Ludo room.
@@ -281,7 +282,14 @@ export class LudoRoom extends Room<{ state: LudoRoomStateInstance }> {
       },
     });
 
+    // A move is a token number. Anything larger, or a stream of them faster than
+    // the clock allows, is refused before the referee sees it.
+    const moveGuard = createMessageGuard();
+
     this.onMessage("move", (client, raw: unknown) => {
+      if (!this.#messageAllowed(moveGuard, client, raw)) {
+        return;
+      }
       this.#onMove(client, raw);
     });
 
@@ -404,6 +412,21 @@ export class LudoRoom extends Room<{ state: LudoRoomStateInstance }> {
   }
 
   /** The message a player sends: one token, validated, then judged by the runner. */
+  /** Refuses a message the guard rejects, and hangs up on a repeat offender. */
+  #messageAllowed(guard: MessageGuard, client: Client, raw: unknown): boolean {
+    const verdict = guard.check(client.sessionId, raw);
+    if (verdict === "ok") {
+      return true;
+    }
+
+    logger.warn({ roomId: this.roomId, verdict }, "refused a room message");
+
+    if (guard.violations(client.sessionId) >= VIOLATIONS_BEFORE_LEAVE) {
+      client.leave(4008);
+    }
+    return false;
+  }
+
   #onMove(client: Client, raw: unknown): void {
     const auth = client.auth as ClientAuth | undefined;
     const runner = this.#runner;

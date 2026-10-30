@@ -43,7 +43,10 @@ class FakeLimits implements LimitsRepository {
     return Promise.resolve(this.#row);
   }
 
-  saveLimits(_userId: string, change: { immediate: UserLimits; pending: LimitsRow["pending"] }): Promise<void> {
+  saveLimits(
+    _userId: string,
+    change: { immediate: UserLimits; pending: LimitsRow["pending"] },
+  ): Promise<void> {
     this.#row = { limits: change.immediate, pending: change.pending };
     return Promise.resolve();
   }
@@ -109,7 +112,11 @@ describe("limits", () => {
   it("treats setting a limit as a tightening and removing one as a relaxation", () => {
     const at = new Date("2026-10-30T12:00:00.000Z");
 
-    const create = planLimitChange({ limits: NO_LIMITS, pending: null }, { dailyLossLimitMinor: 5_000 }, at);
+    const create = planLimitChange(
+      { limits: NO_LIMITS, pending: null },
+      { dailyLossLimitMinor: 5_000 },
+      at,
+    );
     expect(create.immediate.dailyLossLimitMinor).toBe(5_000);
     expect(create.pending).toBeNull();
 
@@ -131,8 +138,12 @@ describe("limits", () => {
       },
     };
 
-    expect(resolveEffectiveLimits(row, new Date("2026-10-31T11:59:59.000Z")).maxStakeMinor).toBe(10_000);
-    expect(resolveEffectiveLimits(row, new Date("2026-10-31T12:00:01.000Z")).maxStakeMinor).toBe(40_000);
+    expect(resolveEffectiveLimits(row, new Date("2026-10-31T11:59:59.000Z")).maxStakeMinor).toBe(
+      10_000,
+    );
+    expect(resolveEffectiveLimits(row, new Date("2026-10-31T12:00:01.000Z")).maxStakeMinor).toBe(
+      40_000,
+    );
   });
 
   it("stores a raised limit as pending and reports it", async () => {
@@ -151,7 +162,9 @@ describe("limits", () => {
 
   it("ends an exclusion when it says it will", () => {
     const at = new Date("2026-10-30T12:00:00.000Z");
-    expect(exclusionEnd(at, { hours: 24, kind: "self_exclusion" })).toBe("2026-10-31T12:00:00.000Z");
+    expect(exclusionEnd(at, { hours: 24, kind: "self_exclusion" })).toBe(
+      "2026-10-31T12:00:00.000Z",
+    );
     expect(exclusionEnd(at, { hours: 1, kind: "cool_off" })).toBe("2026-10-30T13:00:00.000Z");
   });
 

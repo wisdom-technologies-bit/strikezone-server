@@ -37,7 +37,8 @@
     "ludo:watch": "tsx scripts/ludo-watch.ts",
     "audit": "npm audit --omit=dev --audit-level=high",
     "audit:all": "npm audit --audit-level=moderate",
-    "verify": "npm run typecheck && npm run lint && npm test"
+    "verify": "npm run typecheck && npm run lint && npm test",
+    "loadtest": "tsx scripts/loadtest.ts"
   },
   "dependencies": {
     "@colyseus/monitor": "^0.18.7",
