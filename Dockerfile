@@ -1,7 +1,13 @@
 # syntax=docker/dockerfile:1
 
+# Node 22, not 20. Colyseus 0.18 and @supabase/supabase-js 2.118 both declare
+# ">= 22", and on Node 20 the Supabase client throws at import: "Node.js detected
+# but native WebSocket not found", because realtime-js builds a WebSocket in the
+# constructor and Node 20 has no global WebSocket. That is a crash on boot, not a
+# warning, which is how this image died on Render.
+
 # --- build stage -----------------------------------------------------------
-FROM node:20-slim AS build
+FROM node:22-slim AS build
 WORKDIR /app
 ENV NPM_CONFIG_UPDATE_NOTIFIER=false \
     NPM_CONFIG_FUND=false
@@ -14,7 +20,7 @@ COPY src ./src
 RUN npm run build
 
 # --- production dependencies ----------------------------------------------
-FROM node:20-slim AS production-deps
+FROM node:22-slim AS production-deps
 WORKDIR /app
 ENV NPM_CONFIG_UPDATE_NOTIFIER=false \
     NPM_CONFIG_FUND=false
@@ -23,7 +29,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund
 
 # --- runtime ---------------------------------------------------------------
-FROM node:20-slim AS runner
+FROM node:22-slim AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production \

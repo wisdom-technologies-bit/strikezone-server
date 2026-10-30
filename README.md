@@ -10,7 +10,7 @@ Read them before changing anything.
 
 | Concern    | Choice                                                          |
 | ---------- | --------------------------------------------------------------- |
-| Language   | TypeScript (strict), Node 20+                                   |
+| Language   | TypeScript (strict), Node 22+                                   |
 | Realtime   | Colyseus rooms over WebSocket, on the same HTTP server          |
 | HTTP       | Express                                                         |
 | Database   | Supabase Postgres, service role key via `@supabase/supabase-js` |
@@ -402,7 +402,7 @@ output.
 
 Added:
 
-- Toolchain: `package.json` (TypeScript strict, ESM, Node 20+), `tsconfig.json`
+- Toolchain: `package.json` (TypeScript strict, ESM, Node 22+), `tsconfig.json`
   for type-checking, `tsconfig.build.json` for emitting `dist`, ESLint flat
   config (also enforces the `AI_RULES.md` bans on default exports, `Math.random`
   and `any`), Prettier, and Vitest.

@@ -603,6 +603,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /** Maps the two table shapes onto the domain record, refusing anything malformed. */
+/** A seat number as the domain means it: one to four, or one when the row is odd. */
+function toSeatNumber(value: number | null | undefined): MatchSeat["seat"] {
+  if (value === 2 || value === 3 || value === 4) {
+    return value;
+  }
+  return 1;
+}
+
 export function toMatchRecord(row: MatchRow, seats: readonly SeatRow[]): MatchRecord {
   const mapped: MatchSeat[] = seats.map((seat) => {
     const player = seat.players;
@@ -610,7 +618,12 @@ export function toMatchRecord(row: MatchRow, seats: readonly SeatRow[]): MatchRe
     const botPolicy = player?.bot_policy ?? null;
 
     return {
-      seat: seat.seat === 2 ? 2 : 1,
+      // The seat number the row carries, not "two seats or else seat one". That
+      // collapse was Carrom-shaped and silently destroyed every four seat Ludo
+      // match read back: seats 3 and 4 arrived as seat 1, so the board had three
+      // copies of seat one and the referee ended the game as soon as two of them
+      // were home, with a finishing order of two and tokens home [4, 4, 4, 0].
+      seat: toSeatNumber(seat.seat),
       playerId: seat.player_id,
       displayName: player?.display_name ?? seat.player_id,
       isBot,

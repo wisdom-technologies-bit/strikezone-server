@@ -174,7 +174,8 @@ async function main(): Promise<void> {
   );
 
   // 3. A bet on the seat that actually won, so the payout is exercised.
-  const seatName = ["red", "green", "yellow", "blue"][winnerSeat ?? 0] ?? "red";
+  // Seats are numbered from one, the colour list from zero.
+  const seatName = ["red", "green", "yellow", "blue"][(winnerSeat ?? 1) - 1] ?? "red";
   const row = rows.find(
     (each) => each.marketType === "ludo_match_winner" && each.selectionKey === seatName,
   );

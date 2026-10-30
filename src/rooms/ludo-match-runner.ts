@@ -82,8 +82,8 @@ export interface LudoRunnerHooks {
   /** The game is over and the result is written. */
   onEnd?: (info: { readonly result: MatchResult; readonly state: LudoState }) => void;
   /**
-   * The log lost an entry, so the match cannot be signed or settled. The room
-   * closes it as abandoned instead of letting a result reach the books.
+   * Nothing was signed: the board and the result disagreed, or the log lost an
+   * entry. The room closes such a match instead of letting it reach the books.
    */
   onAbandoned?: (info: { readonly reason: string }) => void;
 }
@@ -601,8 +601,69 @@ export class LudoMatchRunner {
     return this.#writes;
   }
 
+  /**
+   * Why a result cannot be signed, or null when it can.
+   *
+   * A signed result is what the books settle against, so it must agree with the
+   * board it came from. When it does not, the useful failure is here with the
+   * mismatch named, not later in the verifier with a token count.
+   */
+  #resultProblem(result: MatchResult, state: LudoState): string | null {
+    const perPlayer = state.config.tokensPerPlayer;
+    const order = result.finishingOrder ?? [];
+    const home = result.tokensHome ?? [];
+    const seatNumbers = [...this.#deps.seats]
+      .map((seat) => seat.seat)
+      .sort((left, right) => left - right);
+
+    if (new Set(seatNumbers).size !== seatNumbers.length) {
+      return "the seat list repeats a seat";
+    }
+    if (order.length !== seatNumbers.length) {
+      return `the finishing order names ${String(order.length)} of ${String(seatNumbers.length)} seats`;
+    }
+    if (home.length !== seatNumbers.length) {
+      return `the result counts tokens home for ${String(home.length)} of ${String(seatNumbers.length)} seats`;
+    }
+    if (result.shots <= 0) {
+      return "the result counts no moves";
+    }
+
+    if (new Set(order).size !== order.length) {
+      return "the finishing order names a seat twice";
+    }
+
+    // `home` is per seat, `order` is per finishing place, so the count is looked up
+    // by seat. Everyone placed before the last one brought every token home; the
+    // last place is the seat still standing when the others finished, which is why
+    // it is placed without being home.
+    for (let position = 0; position < order.length; position += 1) {
+      const seat = order[position] ?? 0;
+      const recorded = home[seat - 1] ?? -1;
+      const onBoard = homeCount(state, seat - 1);
+      if (recorded !== onBoard) {
+        return `seat ${String(seat)} is recorded with ${String(recorded)} tokens home and has ${String(onBoard)}`;
+      }
+      const isLastPlace = position === order.length - 1;
+      if (!isLastPlace && recorded !== perPlayer) {
+        return `seat ${String(seat)} is placed ${String(position + 1)} with ${String(recorded)} of ${String(perPlayer)} tokens home`;
+      }
+    }
+    return null;
+  }
+
   /** Reveals the seed, signs the result and writes both. */
   async #persist(result: MatchResult, finalEntries: readonly MatchLogEntry[]): Promise<void> {
+    const problem = this.#resultProblem(result, this.#state);
+    if (problem !== null) {
+      this.#deps.logger.error(
+        { matchId: this.#deps.matchId, problem },
+        "refusing to sign a result that disagrees with the board",
+      );
+      this.#deps.hooks?.onAbandoned?.({ reason: problem });
+      return;
+    }
+
     const logHeadHash = this.#log.head;
     const resultSignature = signResult(result, logHeadHash);
 
