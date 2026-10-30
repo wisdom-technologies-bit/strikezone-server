@@ -58,6 +58,7 @@ Copy .env.example to .env and fill in every value (see README.md).
 | `npm run odds:backtest`            | Score the model against finished matches           |
 | `npm run tournament:demo`          | Create, play out and print a whole tournament      |
 | `npm run money:demo`               | Top up, bet, settle and reconcile, in memory       |
+| `npm run contract:check`           | Compile the contract file on its own               |
 
 ## Environment variables
 
@@ -86,6 +87,9 @@ In development `http://localhost:3000` is allowed in addition to `SITE_ORIGIN`,
 so the website can run locally against this server.
 
 ## HTTP endpoints
+
+The public and player-facing routes are documented one by one in
+[docs/api.md](docs/api.md), with examples.
 
 | Endpoint                                                      | Status                      | Response                                                           |
 | ------------------------------------------------------------- | --------------------------- | ------------------------------------------------------------------ |
@@ -122,6 +126,54 @@ draining instance.
 The Colyseus WebSocket endpoint shares the same port and the same HTTP server.
 Upgrade requests from any origin other than the allowlist are rejected with 403
 before the handshake.
+
+## Watching a match
+
+A spectator joins the Carrom room as `{ spectate: true }`, anonymously if it
+likes, and receives the state and then every shot:
+
+```js
+const room = await client.joinById(matchId, { spectate: true });
+room.onMessage("*", (type, payload) => {
+  /* welcome, snapshot, shot, match_end */
+});
+```
+
+Each shot carries the referee's events, the state after it, and a recording of
+every body's position at 30 fps, quantised to unsigned 16-bit over the board's
+740 mm span and base64 encoded: 16 bytes per four-body frame instead of about 64.
+The decoder lives beside the encoder in `src/api/contract.ts`, which the website
+copies as it is and which compiles on its own with `npm run contract:check`.
+
+Two things make the stream safe to expose:
+
+- **Fairness.** `shot.received` is published when a shot is accepted, before the
+  simulation runs, so the odds engine can suspend the market before any frame of
+  that shot exists, let alone leaves the server. That ordering is a test, not a
+  comment.
+- **Backpressure.** A viewer whose socket has more than a megabyte waiting is
+  skipped rather than buffered: it is told it fell behind and sent one fresh
+  snapshot instead of the frames it missed. A slow phone cannot slow the room, and
+  the tests drive exactly that viewer.
+
+Limits come from configuration: `MAX_SPECTATORS_PER_ROOM` (default 2000) and
+`SPECTATOR_JOIN_PER_MINUTE` (default 60, per address).
+
+In development, start the server and open `/dev/watch.html`: press start and a bot
+match plays out on a canvas. The page is served only when `NODE_ENV=development`.
+
+## The public API
+
+Every public read is zod-validated, cached for two seconds per URL and limited to
+`PUBLIC_API_RATE_PER_MINUTE` (default 120) per address. `/api/config`,
+`/api/matches/{live,upcoming,recent}`, `/api/matches/:id`, `/api/players/:id`,
+`/api/leaderboard` and the tournament reads need no token; `/api/me/wallet`,
+`/api/me/transactions` and `/api/me/bets` need a Supabase access token and are
+never cached.
+
+`docs/api.md` has every route, every stream message, an example of each, and the
+Supabase Realtime tables the site should subscribe to. `src/api/contract.ts` is
+the machine-readable half of the same contract.
 
 ## Graceful shutdown
 

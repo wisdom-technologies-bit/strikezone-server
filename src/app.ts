@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import express, { type ErrorRequestHandler, type Express } from "express";
 import cors, { type CorsOptions } from "cors";
 import { monitor } from "@colyseus/monitor";
@@ -10,6 +11,7 @@ import { createTournamentsRouter } from "./api/tournaments.js";
 import { createDevRouter } from "./api/dev.js";
 import { healthRouter } from "./api/health.js";
 import { createMarketsRouter } from "./api/markets.js";
+import { createPublicGuards, createPublicRouter } from "./api/public.js";
 import { matchesRouter } from "./api/matches.js";
 import { readyRouter } from "./api/ready.js";
 import { env } from "./lib/env.js";
@@ -73,6 +75,15 @@ export function createApp(): Express {
 
   app.use(healthRouter);
   app.use(readyRouter);
+
+  /**
+   * The public reads are cached for two seconds and rate limited per IP, and the
+   * guards are mounted before the routers so every public GET passes through
+   * them, including the ones built earlier (markets, tournaments). Operator and
+   * development paths opt out inside the guards themselves.
+   */
+  app.use(...createPublicGuards());
+  app.use(createPublicRouter());
   app.use(botsRouter);
   app.use(matchesRouter);
   app.use(createMarketsRouter());
@@ -88,6 +99,7 @@ export function createApp(): Express {
    * production, so the route does not exist there at all.
    */
   if (env.NODE_ENV === "development") {
+    app.use("/dev", express.static(join(process.cwd(), "public", "dev")));
     app.use(createDevRouter());
     app.use("/colyseus", monitor());
   }

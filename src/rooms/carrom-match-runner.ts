@@ -153,6 +153,15 @@ export interface CarromRunnerOptions {
   readonly rng?: MatchRng;
   readonly hooks?: {
     readonly onState?: (snapshot: CarromSnapshot) => void;
+    /**
+     * The shot has been accepted and is about to be simulated. Called before any
+     * frame is produced, so a subscriber can act at the instant of the shot.
+     */
+    readonly onShotStart?: (info: {
+      readonly seat: 1 | 2;
+      readonly source: "human" | "bot" | "timeout";
+      readonly shotNumber: number;
+    }) => void;
     readonly onShot?: (payload: ShotBroadcast) => void;
     readonly onEnd?: (result: MatchResult) => void;
   };
@@ -631,6 +640,14 @@ export class CarromMatchRunner {
 
     const shootingColour = this.#state.turn;
     const boardBefore = this.#state.board;
+
+    // Announced before the simulation runs, so `shot.received` reaches the bus
+    // before a single frame of this shot exists, let alone leaves the server.
+    this.#hooks.onShotStart?.({
+      seat,
+      source,
+      shotNumber: this.#state.shot + 1,
+    });
 
     let applied: ReturnType<typeof applyShot>;
     try {

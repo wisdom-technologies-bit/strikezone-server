@@ -44,6 +44,25 @@ export interface MatchLivePayload {
   readonly startedAt: string;
 }
 
+/**
+ * A shot has been received and is about to be simulated.
+ *
+ * Published *before* any frame of that shot leaves the server, so a trading desk
+ * (or the odds engine) can suspend the market at the instant the shot is known
+ * and before the world can see where it went. That ordering is the fairness
+ * guarantee the betting side relies on, which is why it is a separate event from
+ * `match.shot` rather than a field on it.
+ */
+export interface ShotReceivedPayload {
+  readonly matchId: string;
+  readonly game: "carrom" | "ludo";
+  readonly seat: 1 | 2;
+  /** Who produced it. A timeout is not a human decision and a bot is not either. */
+  readonly source: "human" | "bot" | "timeout";
+  /** The shot number this will become, so a subscriber can key its own state. */
+  readonly shotNumber: number;
+}
+
 /** A shot was played. The odds engine suspends and reprices on these. */
 export interface MatchShotPayload {
   readonly matchId: string;
@@ -133,6 +152,7 @@ export interface EventPayloads {
   "match.created": MatchCreatedPayload;
   "match.live": MatchLivePayload;
   "match.shot": MatchShotPayload;
+  "shot.received": ShotReceivedPayload;
   "match.finished": MatchFinishedPayload;
   "markets.ready_to_settle": MarketsReadyToSettlePayload;
   "tournament.opened": TournamentOpenedPayload;
@@ -150,6 +170,7 @@ export const EVENT_NAMES: readonly EventName[] = [
   "match.created",
   "match.live",
   "match.shot",
+  "shot.received",
   "match.finished",
   "markets.ready_to_settle",
   "tournament.opened",

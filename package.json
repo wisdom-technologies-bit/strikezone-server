@@ -17,6 +17,7 @@
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",
+    "contract:check": "tsc -p tsconfig.contract.json",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -29,7 +30,8 @@
     "odds:fit": "tsx scripts/odds-fit.ts",
     "odds:verify": "tsx scripts/odds-verify.ts",
     "odds:backtest": "tsx scripts/odds-backtest.ts",
-    "money:demo": "tsx scripts/money-demo.ts"
+    "money:demo": "tsx scripts/money-demo.ts",
+    "watch:demo": "tsx scripts/watch-demo.ts"
   },
   "dependencies": {
     "@colyseus/monitor": "^0.18.7",

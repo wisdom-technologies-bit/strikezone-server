@@ -1,0 +1,490 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Watch a match - development</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #12100e;
+        --panel: #1c1917;
+        --line: #3f3a35;
+        --text: #f5f2ee;
+        --muted: #a8a29b;
+        --white: #f4efe6;
+        --black: #2a2724;
+        --queen: #c0392b;
+        --striker: #7fb2ff;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font:
+          14px/1.5 ui-sans-serif,
+          system-ui,
+          -apple-system,
+          "Segoe UI",
+          sans-serif;
+        display: grid;
+        grid-template-columns: minmax(320px, 640px) minmax(280px, 1fr);
+        gap: 20px;
+        padding: 20px;
+        min-height: 100vh;
+      }
+      @media (max-width: 900px) {
+        body {
+          grid-template-columns: 1fr;
+        }
+      }
+      h1 {
+        font-size: 15px;
+        margin: 0 0 12px;
+        font-weight: 600;
+        letter-spacing: 0.01em;
+      }
+      canvas {
+        width: 100%;
+        height: auto;
+        background: #6b4a2f;
+        border-radius: 10px;
+        display: block;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        margin-bottom: 12px;
+        flex-wrap: wrap;
+      }
+      button {
+        font: inherit;
+        padding: 6px 12px;
+        border-radius: 8px;
+        border: 1px solid var(--line);
+        background: var(--panel);
+        color: var(--text);
+        cursor: pointer;
+      }
+      button:hover {
+        background: #262220;
+      }
+      input {
+        font: inherit;
+        padding: 6px 10px;
+        border-radius: 8px;
+        border: 1px solid var(--line);
+        background: var(--panel);
+        color: var(--text);
+        width: 150px;
+      }
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 14px;
+      }
+      .panel + .panel {
+        margin-top: 12px;
+      }
+      .score {
+        display: flex;
+        gap: 18px;
+        font-variant-numeric: tabular-nums;
+      }
+      .score b {
+        font-size: 22px;
+      }
+      .muted {
+        color: var(--muted);
+      }
+      #events {
+        max-height: 320px;
+        overflow: auto;
+        margin: 0;
+        padding-left: 18px;
+      }
+      #events li {
+        margin-bottom: 2px;
+      }
+      .status {
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--muted);
+      }
+    </style>
+  </head>
+  <body>
+    <div>
+      <h1>Watch a match</h1>
+      <div class="row">
+        <button id="start">Start a bot match</button>
+        <input id="room" placeholder="room id" />
+        <button id="watch">Watch</button>
+        <span class="status" id="status">idle</span>
+      </div>
+      <canvas id="board" width="740" height="740"></canvas>
+      <p class="muted" style="font-size: 12px">
+        Development only. Positions arrive quantised to 16 bits and are decoded with the same
+        mapping as src/api/contract.ts.
+      </p>
+    </div>
+
+    <div>
+      <div class="panel">
+        <div class="score">
+          <div>
+            <div class="muted">White</div>
+            <b id="white">0</b>
+            <div class="muted" id="white-name"></div>
+          </div>
+          <div>
+            <div class="muted">Black</div>
+            <b id="black">0</b>
+            <div class="muted" id="black-name"></div>
+          </div>
+        </div>
+        <p class="muted" id="turn-line">-</p>
+      </div>
+      <div class="panel">
+        <h1>Events</h1>
+        <ol id="events"></ol>
+      </div>
+    </div>
+
+    <script type="module">
+      // The client library. Colyseus 0.18 ships an ESM bundle; if the CDN is not
+      // reachable the page says so instead of failing silently.
+      const CLIENT_URL = "https://unpkg.com/colyseus@0.18.10/build/index.mjs";
+
+      const BOARD_MM = 740;
+      const SCALE = 65534;
+      const ABSENT = 65535;
+      const canvas = document.getElementById("board");
+      const context = canvas.getContext("2d");
+      const statusLine = document.getElementById("status");
+      const eventsList = document.getElementById("events");
+
+      const setStatus = (text) => {
+        statusLine.textContent = text;
+      };
+
+      /** The decoder from src/api/contract.ts, unchanged in behaviour. */
+      function decodeBase64(text) {
+        const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        const clean = text.replace(/=+$/, "");
+        const bytes = new Uint8Array(Math.floor((clean.length * 3) / 4));
+        let buffer = 0,
+          bits = 0,
+          written = 0;
+        for (const character of clean) {
+          const value = alphabet.indexOf(character);
+          if (value === -1) {
+            throw new Error("not base64: " + character);
+          }
+          buffer = (buffer << 6) | value;
+          bits += 6;
+          if (bits >= 8) {
+            bits -= 8;
+            bytes[written++] = (buffer >> bits) & 0xff;
+          }
+        }
+        return bytes.subarray(0, written);
+      }
+
+      function decodeFrames(encoded) {
+        const perFrame = encoded.bodyIds.length * 2;
+        const bytes = decodeBase64(encoded.data);
+        const values = new Float64Array(encoded.frameCount * perFrame);
+        for (let index = 0; index < values.length; index += 1) {
+          const low = bytes[index * 2] ?? 0;
+          const high = bytes[index * 2 + 1] ?? 0;
+          const raw = low | (high << 8);
+          // 65535 means "not on the board in this frame", not a position.
+          values[index] = raw === ABSENT ? Number.NaN : (raw / SCALE) * BOARD_MM;
+        }
+        return {
+          fps: encoded.fps,
+          bodyIds: encoded.bodyIds,
+          frameCount: encoded.frameCount,
+          values,
+        };
+      }
+
+      function bodyPosition(decoded, frameIndex, bodyId) {
+        const bodyIndex = decoded.bodyIds.indexOf(bodyId);
+        if (bodyIndex === -1 || frameIndex < 0 || frameIndex >= decoded.frameCount) {
+          return null;
+        }
+        const offset = frameIndex * decoded.bodyIds.length * 2 + bodyIndex * 2;
+        const x = decoded.values[offset];
+        const y = decoded.values[offset + 1];
+        if (x === undefined || y === undefined || Number.isNaN(x) || Number.isNaN(y)) { return null; }
+        return { x, y };
+      }
+
+      // ---------------------------------------------------------------- drawing
+
+      const POCKETS = [
+        [45, 45],
+        [370, 30],
+        [695, 45],
+        [30, 370],
+        [710, 370],
+        [45, 695],
+        [370, 710],
+        [695, 695],
+      ];
+
+      function drawBoardBase() {
+        context.clearRect(0, 0, BOARD_MM, BOARD_MM);
+        context.fillStyle = "#6b4a2f";
+        context.fillRect(0, 0, BOARD_MM, BOARD_MM);
+        context.strokeStyle = "#3b2718";
+        context.lineWidth = 10;
+        context.strokeRect(5, 5, BOARD_MM - 10, BOARD_MM - 10);
+        context.fillStyle = "#0b0a09";
+        for (const [x, y] of POCKETS) {
+          context.beginPath();
+          context.arc(x, y, 22, 0, Math.PI * 2);
+          context.fill();
+        }
+        context.strokeStyle = "rgba(255,255,255,0.08)";
+        context.lineWidth = 1;
+        context.beginPath();
+        context.arc(370, 370, 95, 0, Math.PI * 2);
+        context.stroke();
+      }
+
+      /** What the viewer currently believes about the board. */
+      const view = {
+        coins: [],
+        striker: null,
+        seats: [],
+        scores: { white: 0, black: 0 },
+        frame: null,
+        fps: 30,
+      };
+
+      function drawBodies(bodies) {
+        drawBoardBase();
+        for (const body of bodies) {
+          const isStriker = body.id === "striker";
+          context.beginPath();
+          context.arc(body.x, body.y, isStriker ? 20.5 : 15.5, 0, Math.PI * 2);
+          context.fillStyle = isStriker
+            ? "#7fb2ff"
+            : body.id.startsWith("queen")
+              ? "#c0392b"
+              : body.id.startsWith("black")
+                ? "#2a2724"
+                : "#f4efe6";
+          context.fill();
+          context.lineWidth = 2;
+          context.strokeStyle = "rgba(0,0,0,0.35)";
+          context.stroke();
+        }
+      }
+
+      function drawSnapshot(snapshot) {
+        view.coins = snapshot.coins;
+        view.scores = snapshot.scores;
+        view.seats = snapshot.seats;
+        drawBodies(snapshot.coins);
+        renderScores(snapshot);
+      }
+
+      function renderScores(snapshot) {
+        document.getElementById("white").textContent = String(snapshot.scores.white);
+        document.getElementById("black").textContent = String(snapshot.scores.black);
+        const white = snapshot.seats?.find((seat) => seat.seat === 1);
+        const black = snapshot.seats?.find((seat) => seat.seat === 2);
+        document.getElementById("white-name").textContent = white
+          ? white.isBot
+            ? white.displayName + " (bot)"
+            : white.displayName
+          : "";
+        document.getElementById("black-name").textContent = black
+          ? black.isBot
+            ? black.displayName + " (bot)"
+            : black.displayName
+          : "";
+        document.getElementById("turn-line").textContent =
+          "Board " +
+          String(snapshot.board) +
+          " - " +
+          snapshot.turn +
+          " to play" +
+          (snapshot.phase === "match_ended" ? " - match over" : "");
+      }
+
+      function addEvent(text) {
+        const item = document.createElement("li");
+        item.textContent = text;
+        eventsList.prepend(item);
+        while (eventsList.children.length > 80) {
+          eventsList.lastElementChild.remove();
+        }
+      }
+
+      // ------------------------------------------------------------- playback
+
+      let playing = null;
+
+      /** Plays a decoded recording at its own frame rate, then settles on the end state. */
+      function playShot(message) {
+        const decoded = decodeFrames(message.frames);
+        const startAt = performance.now();
+        playing = { decoded, startAt, message };
+
+        if (decoded.frameCount === 0) {
+          // Nothing moved: jump straight to the resting positions.
+          finishShot();
+          return;
+        }
+
+        requestAnimationFrame(tick);
+      }
+
+      function tick() {
+        if (playing === null) {
+          return;
+        }
+        const elapsedMs = performance.now() - playing.startAt;
+        const index = Math.min(
+          playing.decoded.frameCount - 1,
+          Math.floor((elapsedMs / 1000) * playing.decoded.fps),
+        );
+
+        const bodies = [];
+        for (const id of playing.decoded.bodyIds) {
+          const position = bodyPosition(playing.decoded, index, id);
+          if (position !== null) { bodies.push({ id, x: position.x, y: position.y }); }
+        }
+        drawBodies(bodies);
+
+        if (index >= playing.decoded.frameCount - 1) {
+          finishShot();
+          return;
+        }
+        requestAnimationFrame(tick);
+      }
+
+      function finishShot() {
+        const message = playing?.message ?? null;
+        playing = null;
+        if (message === null) {
+          return;
+        }
+
+        for (const event of message.events) {
+          addEvent(describe(event));
+        }
+        drawBodies(message.nextState.queue);
+        view.scores = message.nextState.scores;
+        renderScores({
+          board: message.nextState.board,
+          turn: message.nextState.turn,
+          phase: message.nextState.phase,
+          scores: message.nextState.scores,
+          seats: view.seats,
+        });
+      }
+
+      function describe(event) {
+        if (event.type === "coin_pocketed") {
+          return (
+            "Board " +
+            String(event.shot) +
+            ": " +
+            event.colour +
+            " " +
+            event.coin +
+            " pocketed for " +
+            event.creditedTo
+          );
+        }
+        if (event.type === "foul") {
+          return "Board " + String(event.shot) + ": foul (" + event.reason + ")";
+        }
+        return event.type;
+      }
+
+      // ------------------------------------------------------------ the room
+
+      async function watch(roomId) {
+        setStatus("loading the client");
+        const { Client } = await import(CLIENT_URL);
+        const protocol = location.protocol === "https:" ? "wss" : "ws";
+        const client = new Client(protocol + "://" + location.host + "/colyseus");
+
+        setStatus("joining " + roomId);
+        const room = await client.joinById(roomId, { spectate: true });
+        setStatus("watching " + room.roomId);
+
+        room.onMessage("welcome", (message) => {
+          view.fps = message.fps ?? 30;
+          setStatus(
+            "watching " + message.matchId + " - " + String(message.spectators) + " spectator(s)",
+          );
+        });
+        room.onMessage("snapshot", (message) => {
+          drawSnapshot(message);
+        });
+        room.onMessage("shot", (message) => {
+          playShot(message);
+        });
+        room.onMessage("lag", (message) => {
+          addEvent("skipped " + String(message.skippedShots) + " shot(s): too slow");
+        });
+        room.onMessage("match_end", (message) => {
+          setStatus("finished: " + message.winner + " (" + message.reason + ")");
+          addEvent(
+            "match over: " +
+              message.winner +
+              ", " +
+              String(message.scores.white) +
+              "-" +
+              String(message.scores.black),
+          );
+        });
+        room.onMessage("rejected", (message) => {
+          addEvent("refused: " + message.message);
+        });
+        room.onLeave(() => {
+          setStatus("left the room");
+        });
+      }
+
+      document.getElementById("start").addEventListener("click", async () => {
+        setStatus("starting a match");
+        const response = await fetch("/dev/start-match", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ white: { bot: "club" }, black: { bot: "rookie" } }),
+        });
+        const body = await response.json();
+        if (!body.ok) {
+          setStatus("could not start: " + body.error);
+          return;
+        }
+        document.getElementById("room").value = body.roomId;
+        await watch(body.roomId);
+      });
+
+      document.getElementById("watch").addEventListener("click", async () => {
+        const roomId = document.getElementById("room").value.trim();
+        if (roomId !== "") {
+          await watch(roomId);
+        }
+      });
+
+      drawBoardBase();
+    </script>
+  </body>
+</html>

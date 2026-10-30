@@ -16,6 +16,9 @@ import {
   type RunnerSeat,
   type ShotBroadcast,
 } from "./carrom-match-runner.js";
+import { STREAM_MESSAGES } from "../api/contract.js";
+import { SpectatorHub, SpectatorRefused, spectatorLimitsFromEnv, type SpectatorLimits } from "./spectators.js";
+import { buildEndMessage, buildShotMessage, buildSnapshot } from "./stream-messages.js";
 import {
   CarromCoinState,
   CarromRoomState,
@@ -49,8 +52,8 @@ export const RECONNECTION_SECONDS = 60;
  */
 const CONSENTED_CLOSE_CODE = 4000;
 
-/** Cap on spectators in one room. */
-const MAX_SPECTATORS = 20;
+/** Cap on spectators in one room when the environment does not set one. */
+const DEFAULT_MAX_SPECTATORS = 2000;
 
 /** How long a finished room stays open so clients can read the result. */
 const MATCH_END_GRACE_MS = 10_000;
@@ -148,13 +151,21 @@ function roomDeps(): CarromRoomDeps {
 }
 
 export class CarromRoom extends Room<{ state: CarromRoomStateInstance }> {
-  override maxClients = 2 + MAX_SPECTATORS;
+  override maxClients = 2 + DEFAULT_MAX_SPECTATORS;
 
   #runner: CarromMatchRunner | null = null;
   #match: MatchRecord | null = null;
   #turnSeconds = 30;
   #allowSpectators = true;
-  #spectators = 0;
+  #limits: SpectatorLimits = spectatorLimitsFromEnv();
+  #hub: SpectatorHub | null = null;
+  /**
+   * True between a shot being accepted and its frames being sent. A spectator
+   * that joins inside that window waits for the shot to finish, so it never gets a
+   * snapshot of a board mid-flight followed by frames that started before it.
+   */
+  #shotInFlight = false;
+  #deferredSnapshots: Client[] = [];
 
   override async onCreate(rawOptions: unknown): Promise<void> {
     // Awaited by Colyseus: no client can join until the match is loaded and the
@@ -212,10 +223,28 @@ export class CarromRoom extends Room<{ state: CarromRoomStateInstance }> {
     // able to dispose the room for everyone else. It closes after the match ends.
     this.autoDispose = false;
 
+    this.maxClients = 2 + this.#limits.maxPerRoom;
+
     this.setState(new CarromRoomState());
     this.state.matchId = match.id;
     this.state.seedCommit = match.seedCommit;
     this.state.turnSeconds = this.#turnSeconds;
+
+    this.#hub = new SpectatorHub({
+      limits: this.#limits,
+      transport: {
+        send: (sessionId, type, payload) => {
+          this.clients.get(sessionId)?.send(type, payload);
+        },
+        // The socket tells us how far behind a viewer is. When it cannot, zero
+        // means "assume healthy": the mailbox is never grown on a guess.
+        bufferedBytes: (sessionId) => {
+          const client = this.clients.get(sessionId);
+          const raw = (client as { raw?: { bufferedAmount?: number } } | undefined)?.raw;
+          return raw?.bufferedAmount ?? 0;
+        },
+      },
+    });
 
     this.#runner = new CarromMatchRunner({
       matchId: match.id,
@@ -231,8 +260,23 @@ export class CarromRoom extends Room<{ state: CarromRoomStateInstance }> {
         onState: (snapshot) => {
           this.#applySnapshot(snapshot);
         },
+        onShotStart: (info) => {
+          this.#shotInFlight = true;
+          // Before a single frame exists, let whoever is trading this match know a
+          // shot is under way. This is the fairness guarantee, so it is published
+          // here rather than beside the broadcast below.
+          void publish("shot.received", {
+            matchId: this.#match?.id ?? "",
+            game: "carrom",
+            seat: info.seat,
+            source: info.source,
+            shotNumber: info.shotNumber,
+          });
+        },
         onShot: (payload) => {
-          this.broadcast("shot", payload);
+          // Seats get the referee's own payload; spectators get the quantised
+          // message below. A broadcast would reach both and send the shot twice.
+          this.#sendToSeats("shot", payload);
           // The odds engine suspends and reprices on this. Publishing costs the
           // room nothing and it never subscribes to anything (hard rule 4).
           void publish("match.shot", {
@@ -241,9 +285,20 @@ export class CarromRoom extends Room<{ state: CarromRoomStateInstance }> {
             seat: payload.seat,
             shotNumber: payload.shotNumber,
           });
+
+          // Spectators get the recording quantised, and are skipped rather than
+          // buffered when their socket is behind (see rooms/spectators.ts).
+          this.#sendShotToSpectators(payload);
         },
         onEnd: (result) => {
-          this.broadcast("match_end", result);
+          this.#sendToSeats("match_end", result);
+          this.#hub?.broadcastEnd(
+            buildEndMessage(result, {
+              matchId: this.#match?.id ?? "",
+              seedReveal: this.#match?.seedReveal ?? null,
+              resultSignature: this.#match?.resultSignature ?? null,
+            }),
+          );
           // Give clients a moment to read the result, then close the room.
           this.clock.setTimeout(() => {
             void this.disconnect();
@@ -261,7 +316,7 @@ export class CarromRoom extends Room<{ state: CarromRoomStateInstance }> {
     logger.info({ matchId: match.id, roomId: this.roomId }, "carrom room created");
   }
 
-  override async onAuth(client: Client, options: unknown): Promise<ClientAuth> {
+  override async onAuth(client: Client, options: unknown, context?: { readonly ip?: string }): Promise<ClientAuth> {
     const parsed = carromRoomOptionsSchema.safeParse(options);
     if (!parsed.success) {
       throw new ServerError(4000, "invalid room options");
@@ -271,6 +326,21 @@ export class CarromRoom extends Room<{ state: CarromRoomStateInstance }> {
       if (!this.#allowSpectators) {
         throw new ServerError(4005, "this match does not allow spectators");
       }
+
+      const hub = this.#hub;
+      if (hub === null) {
+        throw new ServerError(4009, "this match has not started");
+      }
+
+      try {
+        hub.add(client.sessionId, context?.ip ?? "unknown");
+      } catch (error) {
+        if (error instanceof SpectatorRefused) {
+          throw new ServerError(error.code === "room_full" ? 4029 : 4028, error.message);
+        }
+        throw error;
+      }
+
       return { spectate: true, seat: null, userId: null };
     }
 
@@ -296,12 +366,18 @@ export class CarromRoom extends Room<{ state: CarromRoomStateInstance }> {
     const clientAuth = auth ?? { spectate: true, seat: null, userId: null };
 
     if (clientAuth.spectate || clientAuth.seat === null) {
-      this.#spectators += 1;
-      client.send("welcome", {
+      client.send(STREAM_MESSAGES.welcome, {
+        type: "welcome",
         matchId: this.#match?.id ?? "",
         spectate: true,
-        turnSeconds: this.#turnSeconds,
+        spectators: this.#hub?.count ?? 0,
+        fps: this.#match?.config["framesPerSecond"] ?? 30,
       });
+      this.#deliverSnapshot(client);
+      logger.debug(
+        { matchId: this.#match?.id, sessionId: client.sessionId },
+        "spectator joined",
+      );
       return;
     }
 
@@ -331,7 +407,8 @@ export class CarromRoom extends Room<{ state: CarromRoomStateInstance }> {
     const auth = client.auth as ClientAuth | undefined;
 
     if (auth === undefined || auth.spectate || auth.seat === null) {
-      this.#spectators = Math.max(0, this.#spectators - 1);
+      this.#hub?.remove(client.sessionId);
+      this.#deferredSnapshots = this.#deferredSnapshots.filter((waiting) => waiting !== client);
       return;
     }
 
@@ -394,6 +471,53 @@ export class CarromRoom extends Room<{ state: CarromRoomStateInstance }> {
 
     if (!outcome.ok) {
       client.send("rejected", { code: outcome.code, message: outcome.message });
+    }
+  }
+
+  /**
+   * Sends the full state to one spectator, or holds it until the shot in flight
+   * has been broadcast. Joining mid-shot therefore yields the state after that
+   * shot, which is the only snapshot whose frames the viewer will also receive.
+   */
+  #deliverSnapshot(client: Client): void {
+    const hub = this.#hub;
+    if (hub === null) {
+      return;
+    }
+
+    if (this.#shotInFlight) {
+      this.#deferredSnapshots.push(client);
+      return;
+    }
+
+    hub.sendSnapshot(client.sessionId, buildSnapshot(this.state));
+  }
+
+  /** Sends a message to the players only. Spectators are never included. */
+  #sendToSeats(type: string, payload: unknown): void {
+    for (const client of this.clients) {
+      if (this.#hub?.has(client.sessionId) !== true) {
+        client.send(type, payload);
+      }
+    }
+  }
+
+  /** The shot, quantised, to every spectator that can take it. */
+  #sendShotToSpectators(payload: ShotBroadcast): void {
+    const hub = this.#hub;
+    if (hub === null) {
+      return;
+    }
+
+    hub.broadcastShot(buildShotMessage(payload));
+    hub.warnIfLagging(this.#match?.id ?? "");
+
+    this.#shotInFlight = false;
+
+    const waiting = this.#deferredSnapshots;
+    this.#deferredSnapshots = [];
+    for (const client of waiting) {
+      hub.sendSnapshot(client.sessionId, buildSnapshot(this.state));
     }
   }
 
