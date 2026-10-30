@@ -447,7 +447,10 @@ export class SupabaseMatchRepository implements MatchRepository {
     const matchInsert = await this.#client
       .from("matches")
       .insert({
-        game: "carrom",
+        // The caller's game, not a guess: a Ludo match written as Carrom is a
+        // match whose settlement reads the wrong catalogue, which voids every
+        // market on it.
+        game: input.game ?? "carrom",
         status: "scheduled",
         seed_commit: input.seedCommit,
         config: input.config ?? {},
