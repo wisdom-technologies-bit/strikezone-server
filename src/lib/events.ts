@@ -44,6 +44,16 @@ export interface MatchLivePayload {
   readonly startedAt: string;
 }
 
+/** A shot was played. The odds engine suspends and reprices on these. */
+export interface MatchShotPayload {
+  readonly matchId: string;
+  readonly game: "carrom" | "ludo";
+  /** 1 or 2. */
+  readonly seat: 1 | 2;
+  /** How many shots the match has now played, counting this one. */
+  readonly shotNumber: number;
+}
+
 /** A match finished, with the signed result. */
 export interface MatchFinishedPayload {
   readonly matchId: string;
@@ -53,6 +63,20 @@ export interface MatchFinishedPayload {
   readonly loserPlayerId: string | null;
   readonly reason: "scored" | "forfeit" | "board_limit" | "walkover";
   readonly scores: { readonly white: number; readonly black: number };
+}
+
+/**
+ * A match is over and its markets can be settled. Published by the odds engine
+ * with the stats every market settles against; settlement itself belongs to the
+ * betting side, which is why this carries data and never a decision.
+ */
+export interface MarketsReadyToSettlePayload {
+  readonly matchId: string;
+  readonly game: "carrom" | "ludo";
+  readonly winner: "white" | "black" | "tie" | null;
+  readonly boardsPlayed: number;
+  readonly totalPoints: number;
+  readonly totalFouls: number;
 }
 
 /** Registration opened for a tournament. */
@@ -108,7 +132,9 @@ export interface TournamentCancelledPayload {
 export interface EventPayloads {
   "match.created": MatchCreatedPayload;
   "match.live": MatchLivePayload;
+  "match.shot": MatchShotPayload;
   "match.finished": MatchFinishedPayload;
+  "markets.ready_to_settle": MarketsReadyToSettlePayload;
   "tournament.opened": TournamentOpenedPayload;
   "tournament.bracket_ready": TournamentBracketReadyPayload;
   "tournament.round_started": TournamentRoundStartedPayload;
@@ -123,7 +149,9 @@ export type EventName = keyof EventPayloads;
 export const EVENT_NAMES: readonly EventName[] = [
   "match.created",
   "match.live",
+  "match.shot",
   "match.finished",
+  "markets.ready_to_settle",
   "tournament.opened",
   "tournament.bracket_ready",
   "tournament.round_started",

@@ -8,6 +8,7 @@ import type { MatchRecord, MatchRepository, MatchResult } from "../lib/match-rep
 import { supabase } from "../lib/supabase.js";
 import { logger } from "../lib/logger.js";
 import { isShuttingDown } from "../lib/lifecycle.js";
+import { publish } from "../lib/events.js";
 import {
   CarromMatchRunner,
   runnerSeatsFromMatch,
@@ -232,6 +233,14 @@ export class CarromRoom extends Room<{ state: CarromRoomStateInstance }> {
         },
         onShot: (payload) => {
           this.broadcast("shot", payload);
+          // The odds engine suspends and reprices on this. Publishing costs the
+          // room nothing and it never subscribes to anything (hard rule 4).
+          void publish("match.shot", {
+            matchId: this.#match?.id ?? "",
+            game: "carrom",
+            seat: payload.seat,
+            shotNumber: payload.shotNumber,
+          });
         },
         onEnd: (result) => {
           this.broadcast("match_end", result);

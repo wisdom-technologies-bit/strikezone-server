@@ -6,6 +6,7 @@ import { botsRouter } from "./api/bots.js";
 import { createTournamentsRouter } from "./api/tournaments.js";
 import { createDevRouter } from "./api/dev.js";
 import { healthRouter } from "./api/health.js";
+import { createMarketsRouter } from "./api/markets.js";
 import { matchesRouter } from "./api/matches.js";
 import { readyRouter } from "./api/ready.js";
 import { env } from "./lib/env.js";
@@ -59,6 +60,7 @@ export function createApp(): Express {
   app.use(readyRouter);
   app.use(botsRouter);
   app.use(matchesRouter);
+  app.use(createMarketsRouter());
   app.use(createTournamentsRouter());
   app.use(createAdminTournamentsRouter());
 
