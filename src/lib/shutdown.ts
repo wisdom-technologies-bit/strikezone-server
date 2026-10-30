@@ -24,6 +24,8 @@ export interface StopServerOptions {
   readonly httpServer: HttpServer;
   readonly logger: Logger;
   readonly timeoutMs?: number;
+  /** Stops background subscribers before the sockets close. */
+  readonly onDrain?: () => void;
 }
 
 async function countActiveRooms(): Promise<number> {
@@ -67,6 +69,12 @@ export async function stopServer(options: StopServerOptions): Promise<boolean> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_DRAIN_TIMEOUT_MS;
 
   beginShutdown();
+
+  try {
+    options.onDrain?.();
+  } catch (error) {
+    options.logger.warn({ err: error }, "a drain hook failed");
+  }
   logger.info({ timeoutMs }, "shutdown requested: refusing new rooms and connections");
 
   await new Promise<void>((resolve) => {

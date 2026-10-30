@@ -98,6 +98,12 @@ export interface Ledger {
   userAccount(profileId: string): Promise<string>;
   /** The house account: rake, fees and unclaimed prizes land here. */
   houseAccount(): Promise<string>;
+  /** Where stakes sit at risk: money in escrow is owed to a player or the house. */
+  escrowAccount(): Promise<string>;
+  /** Where the operator's own money enters the system. */
+  treasuryAccount(): Promise<string>;
+  /** Money owed to a player while a withdrawal is being paid. */
+  withdrawalHoldAccount(): Promise<string>;
   /** The prize pool of one tournament, created on first use. */
   prizePoolAccount(tournamentId: string): Promise<string>;
   /** Every transaction that names this ref, newest last. */
@@ -112,7 +118,7 @@ export interface Ledger {
 
 interface MemoryAccount {
   readonly id: string;
-  readonly ownerType: "user" | "house" | "prize_pool" | "escrow";
+  readonly ownerType: "user" | "house" | "prize_pool" | "escrow" | "treasury" | "withdrawal_hold";
   readonly userId: string | null;
   readonly tournamentId: string | null;
   readonly currency: string;
@@ -232,20 +238,37 @@ export class InMemoryLedger implements Ledger {
   }
 
   houseAccount(): Promise<string> {
+    return Promise.resolve(this.#singleton("house"));
+  }
+
+  escrowAccount(): Promise<string> {
+    return Promise.resolve(this.#singleton("escrow"));
+  }
+
+  treasuryAccount(): Promise<string> {
+    return Promise.resolve(this.#singleton("treasury"));
+  }
+
+  withdrawalHoldAccount(): Promise<string> {
+    return Promise.resolve(this.#singleton("withdrawal_hold"));
+  }
+
+  /** The one account of a singleton kind, created on first use. */
+  #singleton(ownerType: "house" | "escrow" | "treasury" | "withdrawal_hold"): string {
     for (const account of this.#accounts.values()) {
-      if (account.ownerType === "house") {
-        return Promise.resolve(account.id);
+      if (account.ownerType === ownerType) {
+        return account.id;
       }
     }
-    const id = "acct_house";
+    const id = `acct_${ownerType}`;
     this.#accounts.set(id, {
       id,
-      ownerType: "house",
+      ownerType,
       userId: null,
       tournamentId: null,
       currency: this.currency,
     });
-    return Promise.resolve(id);
+    return id;
   }
 
   prizePoolAccount(tournamentId: string): Promise<string> {
@@ -441,6 +464,18 @@ export class SupabaseLedger implements Ledger {
     return this.#singletonAccount("house");
   }
 
+  async escrowAccount(): Promise<string> {
+    return this.#singletonAccount("escrow");
+  }
+
+  async treasuryAccount(): Promise<string> {
+    return this.#singletonAccount("treasury");
+  }
+
+  async withdrawalHoldAccount(): Promise<string> {
+    return this.#singletonAccount("withdrawal_hold");
+  }
+
   async prizePoolAccount(tournamentId: string): Promise<string> {
     const found = await this.#client
       .from("wallet_accounts")
@@ -546,7 +581,9 @@ export class SupabaseLedger implements Ledger {
     }));
   }
 
-  async #singletonAccount(ownerType: "house" | "escrow"): Promise<string> {
+  async #singletonAccount(
+    ownerType: "house" | "escrow" | "treasury" | "withdrawal_hold",
+  ): Promise<string> {
     const found = await this.#client
       .from("wallet_accounts")
       .select("id")

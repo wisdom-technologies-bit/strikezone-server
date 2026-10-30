@@ -17,8 +17,13 @@ psql -q -v ON_ERROR_STOP=1 -d "${db}" -f "${root}/supabase/tests/local_shim.sql"
 
 for file in "${root}"/supabase/migrations/*.sql; do
   echo "applying $(basename "${file}")"
-  psql -q -v ON_ERROR_STOP=1 -d "${db}" -f "${file}" 2>&1 | grep -v '^NOTICE' || true
+  # No pipe and no || true: a migration that fails must stop the run, not be
+  # filtered away as if it had applied.
+  psql -q -v ON_ERROR_STOP=1 -d "${db}" -f "${file}"
 done
 
 echo "running checks"
 psql -q -v ON_ERROR_STOP=1 -d "${db}" -f "${root}/supabase/tests/verify.sql"
+
+echo "running money checks"
+psql -q -v ON_ERROR_STOP=1 -d "${db}" -f "${root}/supabase/tests/money.sql"

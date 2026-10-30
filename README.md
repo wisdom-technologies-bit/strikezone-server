@@ -63,32 +63,54 @@ Copy .env.example to .env and fill in every value (see README.md).
 Every value is read through `src/lib/env.ts` and validated with zod. Nothing is
 hard-coded and nothing is logged.
 
-| Variable                    | Required | Default | Notes                                                         |
-| --------------------------- | -------- | ------- | ------------------------------------------------------------- |
-| `NODE_ENV`                  | yes      | -       | `development`, `test` or `production`                         |
-| `PORT`                      | yes      | -       | Shared by the HTTP API and the Colyseus WebSocket server      |
-| `SITE_ORIGIN`               | yes      | -       | The website's URL; the only allowed CORS and WebSocket origin |
-| `SUPABASE_URL`              | yes      | -       | Supabase project URL                                          |
-| `SUPABASE_SERVICE_ROLE_KEY` | yes      | -       | Bypasses RLS. Server-side only, never shipped to a client     |
-| `RESULT_SIGNING_SECRET`     | yes      | -       | Signs match results (>= 32 chars)                             |
-| `ADMIN_API_KEY`             | yes      | -       | Authenticates admin API calls (>= 24 chars)                   |
-| `MONEY_MODE`                | yes      | -       | `virtual` or `real`                                           |
-| `CURRENCY`                  | no       | `NGN`   | ISO 4217 code; NGN amounts are integers in kobo               |
-| `HOUSE_MARGIN_BPS`          | no       | `600`   | Basis points, so 600 = 6.00%                                  |
+| Variable                    | Required | Default   | Notes                                                           |
+| --------------------------- | -------- | --------- | --------------------------------------------------------------- |
+| `NODE_ENV`                  | yes      | -         | `development`, `test` or `production`                           |
+| `PORT`                      | yes      | -         | Shared by the HTTP API and the Colyseus WebSocket server        |
+| `SITE_ORIGIN`               | yes      | -         | The website's URL; the only allowed CORS and WebSocket origin   |
+| `SUPABASE_URL`              | yes      | -         | Supabase project URL                                            |
+| `SUPABASE_SERVICE_ROLE_KEY` | yes      | -         | Bypasses RLS. Server-side only, never shipped to a client       |
+| `RESULT_SIGNING_SECRET`     | yes      | -         | Signs match results (>= 32 chars)                               |
+| `ADMIN_API_KEY`             | yes      | -         | Authenticates admin API calls (>= 24 chars)                     |
+| `MONEY_MODE`                | yes      | -         | `virtual` or `real`                                             |
+| `CURRENCY`                  | no       | `NGN`     | ISO 4217 code; NGN amounts are integers in kobo                 |
+| `HOUSE_MARGIN_BPS`          | no       | `600`     | Basis points, so 600 = 6.00%                                    |
+| `MIN_STAKE_MINOR`           | no       | `100`     | Smallest stake, in minor units                                  |
+| `MATCH_EXPOSURE_PCT`        | no       | `20`      | How much of the free bankroll one match may risk, in percent    |
+| `LARGE_PAYOUT_MINOR`        | no       | `5000000` | A payout above this waits for an operator before it is paid     |
+| `MIN_ACCOUNT_AGE_HOURS`     | no       | `24`      | Account age required before a real-money withdrawal             |
+| `BET_RATE_LIMIT_PER_MINUTE` | no       | `10`      | Bets one player may place in a minute (mirrored in `place_bet`) |
 
 In development `http://localhost:3000` is allowed in addition to `SITE_ORIGIN`,
 so the website can run locally against this server.
 
 ## HTTP endpoints
 
-| Endpoint                       | Status                      | Response                                                           |
-| ------------------------------ | --------------------------- | ------------------------------------------------------------------ |
-| `GET /health`                  | 200 while running           | `{ "ok": true, "version": "0.1.0", "uptimeSeconds": 42 }`          |
-| `GET /ready`                   | 200 when ready, 503         | `{ "ok": true, "checks": { "draining": "up", "supabase": "up" } }` |
-| `GET /api/bots`                | 200                         | The bot catalogue: level, name, policy id, numbers                 |
-| `GET /api/matches/:id/replay`  | 200, 404                    | Seats, hash-chained events, chain check, result                    |
-| `GET /api/matches/:id/markets` | 200                         | Every market of a match, grouped by market type                    |
-| `POST /dev/start-match`        | 201, 400 (development only) | `{ matchId, roomId, seedCommit, seats }`                           |
+| Endpoint                                                      | Status                      | Response                                                           |
+| ------------------------------------------------------------- | --------------------------- | ------------------------------------------------------------------ |
+| `GET /health`                                                 | 200 while running           | `{ "ok": true, "version": "0.1.0", "uptimeSeconds": 42 }`          |
+| `GET /ready`                                                  | 200 when ready, 503         | `{ "ok": true, "checks": { "draining": "up", "supabase": "up" } }` |
+| `GET /api/bots`                                               | 200                         | The bot catalogue: level, name, policy id, numbers                 |
+| `GET /api/matches/:id/replay`                                 | 200, 404                    | Seats, hash-chained events, chain check, result                    |
+| `GET /api/matches/:id/markets`                                | 200                         | Every market of a match, grouped by market type                    |
+| `POST /dev/start-match`                                       | 201, 400 (development only) | `{ matchId, roomId, seedCommit, seats }`                           |
+| `POST /api/bets`                                              | 201, 400, 409, 429          | The placed bet, its payout, the balance left                       |
+| `GET /api/me/bets`                                            | 200                         | The caller's own bets, newest first                                |
+| `POST /api/me/self-exclude`                                   | 200, 400                    | `{ until, kind }`; play and deposits are blocked until then        |
+| `GET`/`PUT /api/me/limits`                                    | 200, 400                    | Limits in force, and any change waiting out its 24 hours           |
+| `POST /api/deposits`                                          | 201, 409                    | The deposit row, a redirect URL when the provider hosts checkout   |
+| `GET`/`POST /api/withdrawals`                                 | 200/201, 409                | Request a withdrawal; the money moves to the hold account          |
+| `POST /api/webhooks/payments/:provider`                       | 200, 400                    | Signature-verified, replay-safe provider callback                  |
+| `POST /api/admin/bankroll/topup`                              | 201, 400                    | Moves operator cash into the house through the ledger              |
+| `GET /api/admin/solvency`                                     | 200                         | What players hold, what is owed, exposure, free bankroll           |
+| `POST /api/admin/solvency/snapshot`                           | 201                         | Stores reported cash next to liabilities, and the gap              |
+| `GET /api/admin/reconcile`                                    | 200                         | Every accounting invariant, with the differences that must be zero |
+| `GET /api/admin/bets/pending-review`                          | 200                         | Payouts held for an operator                                       |
+| `POST /api/admin/bets/:id/approve`\|`/reject`                 | 200, 404, 409               | Release or refuse a held payout                                    |
+| `POST /api/admin/withdrawals/:id/approve`\|`/paid`\|`/reject` | 200, 404, 409               | The three withdrawal decisions                                     |
+| `GET`/`POST /api/admin/betting`                               | 200, 400                    | The global betting switch                                          |
+| `POST /api/admin/markets/:id/suspend`                         | 200, 404                    | Suspend or reopen one selection                                    |
+| `GET /api/admin/audit`                                        | 200                         | The audit trail, newest first                                      |
 
 `/health` never touches the database, so a database outage does not restart an
 otherwise healthy process. `/ready` runs the Supabase connection test (a
@@ -148,6 +170,95 @@ supabase/
   tests/            local Postgres shim + SQL behaviour checks for the migrations
 tests/                Vitest suites
 ```
+
+### Money - wallet, betting and the operator's controls
+
+This is the part of the system that must never be wrong twice. Everything below
+follows one rule: **money moves only through `post_ledger_transaction`, and every
+movement is keyed**, so a retry, a redelivered webhook or an operator double
+click moves nothing new.
+
+**Accounts.** Players have a wallet. `escrow` holds stakes at risk, `treasury` is
+where the operator's cash enters, `withdrawal_hold` holds money owed to a player
+while a withdrawal is being paid, and `house` is what the operator can lose. A
+balance is never stored: it is the sum of append-only entries, and the ledger
+refuses any transaction whose legs do not sum to zero or that would overdraw a
+player.
+
+**Placing a bet.** `POST /api/bets` validates the body, refuses a stake under
+`MIN_STAKE_MINOR`, then calls `place_bet` (migration 009). That function does the
+rest inside one database transaction, with the market and the house account
+locked so two simultaneous bets cannot both pass a cap:
+
+1. the idempotency key: a replay returns the original bet, a key belonging to
+   someone else is a conflict;
+2. the market must be `open` and the platform not paused;
+3. odds drift: a price that fell is refused with the current price, a price that
+   rose is taken, at the better price;
+4. the stake floor, the market's own cap, the player's limits and the daily loss
+   limit, self-exclusion, KYC in real money, and ten bets a minute;
+5. the balance must cover the stake;
+6. exposure: the match's exposure after this bet must stay inside
+   `MATCH_EXPOSURE_PCT` of the free bankroll, and global exposure must stay inside
+   the bankroll itself. A bet on the _other_ selection of a market can reduce
+   exposure, because the stake is money the house keeps;
+7. the stake moves into escrow, the bet is written, the payout is
+   `floor(stake x odds)` computed on integers.
+
+**Settlement.** The room publishes `markets.ready_to_settle`; `settleMatch`
+verifies the match first (signature, hash chain, full replay) and refuses to
+settle anything if verification fails, flagging the match instead. Then the
+catalogue decides each market and the ledger moves the money:
+
+| Outcome | Escrow        | Player    | House       |
+| ------- | ------------- | --------- | ----------- |
+| won     | `-stake`      | `+payout` | `-(profit)` |
+| lost    | `-stake`      | -         | `+stake`    |
+| void    | `-stake`      | `+stake`  | -           |
+| hold    | nothing moves | -         | -           |
+
+A payout above `LARGE_PAYOUT_MINOR` becomes `pending_review` with the money still
+in escrow: approving pays it, rejecting refunds it. Whole-match voids are narrow
+on purpose. A match abandoned before its first shot, or one where a human seat
+never joined, voids everything. A forfeit settles the winner market and voids the
+rest, because the match was not played as advertised. A bare dispute never voids
+anything: the evidence decides, and the operator can suspend a market instead.
+
+Settlement is idempotent: settled bets are no longer open, and every ledger
+movement is keyed `settle:<betId>` (or `settle-void:<betId>` after a refusal), so
+running it twice pays once.
+
+**Payments.** A deposit is gated by self-exclusion and the daily deposit limit,
+then handed to a provider. Three are wired: `mock` (virtual money, settles
+instantly), `manual` (an operator confirms the transfer, the launch default for
+real money) and a documented `paystack` stub that deliberately throws rather than
+pretend to move money. A webhook is verified against the raw body, stored under
+its provider event id, and then acted on once; an amount that does not match the
+deposit is logged and refused. A withdrawal moves the free balance into
+`withdrawal_hold` immediately. Approval moves nothing: only marking it paid
+releases the hold to the treasury, so "approved" and "paid" can never be confused.
+
+**The operator's view.** `GET /api/admin/solvency` returns player balances,
+escrow, the hold, house and treasury funds, open exposure and the free bankroll.
+`POST /api/admin/solvency/snapshot` stores the cash the operator says they hold
+next to what players are owed and reports the gap, which is the number that says
+whether the business is trading while insolvent. `GET /api/admin/reconcile`
+returns the invariants: unbalanced transactions, accounts whose balance is not the
+sum of their entries, negative player wallets, bets without a stake, and escrow
+and the hold against what they should contain. Every one must be zero, and the
+`money.sql` check fails the build if it is not.
+
+**Verifying it.**
+
+```bash
+supabase/tests/run.sh          # migrations, schema checks, 14 money checks
+supabase/tests/concurrency.sh  # 100 simultaneous bets against the cap
+npm test                       # 252 unit and route tests
+```
+
+The concurrency check is the one worth reading: a hundred players bet at once on
+a house with 1,000,000 kobo of free cash, and exactly the number of bets the cap
+allows are accepted, with exposure stopping on the boundary rather than past it.
 
 ## Task log
 
@@ -640,3 +751,26 @@ tournament work alone (brackets for every entrant count, the two formats'
 finishing orders, the prize split and its balance invariant, the full lifecycle,
 walkovers, cancellation refunds, restart recovery, the scheduler's lease and a
 lying lease), plus 155 across the repository.
+
+### Money - wallet, betting and the operator's controls
+
+Migration `009_money_extras.sql` adds the treasury and withdrawal-hold accounts,
+`pending_review` bets, the deposit, withdrawal, limit, flag, snapshot and audit
+tables, and `place_bet`, which places a bet in one transaction with the market and
+the house locked. `solvency_report` and `reconcile_report` expose the position and
+the invariants as one object each.
+
+`src/betting` holds the rules (payout on integers, odds drift, the two void rules,
+held payouts), the bets repository, placement and settlement. `src/wallet` holds
+the providers, deposits and withdrawals. `src/admin` holds the bankroll, solvency,
+reconcile and payout review, all audited.
+
+Two defects were found and fixed while testing. A limit that was being _created_
+was treated as a relaxation, so a new limit waited twenty-four hours before it
+applied; setting a limit is now a tightening. And `BetWithMarket` carried both the
+bet id and the market id under the name `id`, so settlement updated the wrong row;
+the market's id is now `marketRowId`.
+
+Verified with 14 SQL checks (including solvency and reconcile reporting zero
+differences), a 100-way concurrency storm that accepts exactly the bets the cap
+allows, and 252 unit and route tests.

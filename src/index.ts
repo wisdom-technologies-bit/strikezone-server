@@ -2,7 +2,10 @@ import { createServer } from "node:http";
 import { Server as ColyseusServer } from "colyseus";
 import { WebSocketTransport } from "@colyseus/ws-transport";
 import { createApp } from "./app.js";
+import { subscribeSettlement } from "./betting/settle.js";
 import { env } from "./lib/env.js";
+import { matchRepository } from "./lib/match-store.js";
+import { marketsRepository } from "./odds/markets-store.js";
 import { logger } from "./lib/logger.js";
 import { isOriginAllowed } from "./lib/origins.js";
 import { DEFAULT_DRAIN_TIMEOUT_MS, registerShutdownHandlers } from "./lib/shutdown.js";
@@ -72,7 +75,21 @@ void scheduler.resume().catch((error: unknown) => {
 });
 scheduler.start();
 
+/**
+ * Settlement is event driven.
+ *
+ * The room publishes `markets.ready_to_settle` when a match ends, and the
+ * betting layer verifies the match and settles its bets. The handler is
+ * idempotent, so a failed run is safe to repeat; `settleMatch` can also be
+ * called by hand for a match that was missed while the process was down.
+ */
+const unsubscribeSettlement = subscribeSettlement({
+  matches: matchRepository(),
+  markets: marketsRepository(),
+});
+
 registerShutdownHandlers({
+  onDrain: unsubscribeSettlement,
   gameServer,
   httpServer,
   logger,

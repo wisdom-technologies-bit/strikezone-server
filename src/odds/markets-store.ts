@@ -35,6 +35,8 @@ export interface MarketsRepository {
     marketTypes: readonly string[],
     status: MarketStatus,
   ): Promise<void>;
+  /** Suspends or reopens one row, for the admin market switch. */
+  setSelectionStatus(marketId: string, status: MarketStatus): Promise<boolean>;
 }
 
 export class MarketsRepositoryError extends Error {
@@ -98,6 +100,26 @@ export class InMemoryMarketsRepository implements MarketsRepository {
       }
     }
   }
+
+  setSelectionStatus(marketId: string, status: MarketStatus): Promise<boolean> {
+    for (const [key, row] of [...this.#rows.entries()]) {
+      const id = marketIdFor(row);
+      if (id === marketId) {
+        this.#rows.set(key, { ...row, status });
+        return Promise.resolve(true);
+      }
+    }
+    return Promise.resolve(false);
+  }
+}
+
+/** The id a row would have in the database: its five identity fields. */
+export function marketIdFor(
+  row: Pick<MarketRow, "matchId" | "marketType" | "subject" | "line" | "selectionKey">,
+): string {
+  return [row.matchId, row.marketType, row.subject, String(row.line ?? ""), row.selectionKey].join(
+    "|",
+  );
 }
 
 interface MarketDbRow {
@@ -215,6 +237,19 @@ export class SupabaseMarketsRepository implements MarketsRepository {
     if (result.error !== null) {
       throw new MarketsRepositoryError(`could not update the markets: ${result.error.message}`);
     }
+  }
+
+  async setSelectionStatus(marketId: string, status: MarketStatus): Promise<boolean> {
+    const result = await this.#client
+      .from("markets")
+      .update({ status })
+      .eq("id", marketId)
+      .select("id");
+
+    if (result.error !== null) {
+      throw new MarketsRepositoryError(`could not update the market: ${result.error.message}`);
+    }
+    return (result.data ?? []).length > 0;
   }
 }
 

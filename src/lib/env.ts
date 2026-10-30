@@ -47,6 +47,16 @@ const envSchema = z.object({
     .default("NGN"),
   /** House margin in basis points: 600 = 6.00%. */
   HOUSE_MARGIN_BPS: z.coerce.number().int().min(0).max(10_000).default(600),
+  /** The smallest stake a bet may carry, in minor units. */
+  MIN_STAKE_MINOR: z.coerce.number().int().min(1).default(100),
+  /** How much of the free bankroll one match's exposure may take, in percent. */
+  MATCH_EXPOSURE_PCT: z.coerce.number().min(0.01).max(100).default(20),
+  /** A payout above this waits for an admin before it is released. */
+  LARGE_PAYOUT_MINOR: z.coerce.number().int().min(1).default(5_000_000),
+  /** How long an account must exist before real money can be withdrawn. */
+  MIN_ACCOUNT_AGE_HOURS: z.coerce.number().min(0).default(24),
+  /** Bets one player may place in any one minute. Mirrored in place_bet. */
+  BET_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).default(10),
 });
 
 export type Env = Readonly<z.infer<typeof envSchema>>;

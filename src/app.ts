@@ -1,7 +1,10 @@
 import express, { type ErrorRequestHandler, type Express } from "express";
 import cors, { type CorsOptions } from "cors";
 import { monitor } from "@colyseus/monitor";
+import { createAdminMoneyRouter } from "./api/admin-money.js";
 import { createAdminTournamentsRouter } from "./api/admin-tournaments.js";
+import { createBetsRouter } from "./api/bets.js";
+import { createPaymentsRouter } from "./api/payments.js";
 import { botsRouter } from "./api/bots.js";
 import { createTournamentsRouter } from "./api/tournaments.js";
 import { createDevRouter } from "./api/dev.js";
@@ -54,13 +57,28 @@ export function createApp(): Express {
   };
   app.use(cors(corsOptions));
 
-  app.use(express.json({ limit: "100kb" }));
+  /**
+   * The raw body is kept as well as the parsed one: a payment webhook's signature
+   * covers the exact bytes the provider sent, and re-serialising the parsed object
+   * would not authenticate it.
+   */
+  app.use(
+    express.json({
+      limit: "100kb",
+      verify: (request, _response, buffer) => {
+        (request as { rawBody?: string }).rawBody = buffer.toString("utf8");
+      },
+    }),
+  );
 
   app.use(healthRouter);
   app.use(readyRouter);
   app.use(botsRouter);
   app.use(matchesRouter);
   app.use(createMarketsRouter());
+  app.use(createBetsRouter());
+  app.use(createPaymentsRouter());
+  app.use(createAdminMoneyRouter());
   app.use(createTournamentsRouter());
   app.use(createAdminTournamentsRouter());
 
