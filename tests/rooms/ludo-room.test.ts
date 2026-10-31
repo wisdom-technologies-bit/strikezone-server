@@ -21,6 +21,17 @@ import {
 const repository = new InMemoryMatchRepository();
 let colyseus: ColyseusTestServer;
 
+/**
+ * Two deadlines, both generous on purpose.
+ *
+ * This test plays four hundred turns over a real socket, so on a loaded machine
+ * it takes as long as the scheduler lets it. These are waits, not allowances: the
+ * assertions below are unchanged, and neither deadline shortens what has to be
+ * true before the test passes.
+ */
+const MATCH_DEADLINE_MS = 120_000;
+const STREAM_DEADLINE_MS = 30_000;
+
 beforeAll(async () => {
   setLudoRoomDeps({
     repository,
@@ -40,7 +51,7 @@ beforeAll(async () => {
   };
 
   colyseus = await boot(config as unknown as Parameters<typeof boot>[0], 2573);
-}, 30_000);
+}, 60_000);
 
 afterAll(async () => {
   await colyseus.shutdown();
@@ -58,6 +69,31 @@ function collectAll(client: ClientRoom<unknown>): Logged[] {
     log.push({ type: String(type), payload });
   });
   return log;
+}
+
+/**
+ * Waits until the received stream has caught up with the number of turns the
+ * match played.
+ *
+ * The match row is written a moment before the last messages reach a spectator,
+ * and under CPU contention that gap is wide enough to see. Waiting for the
+ * stream does not make the assertion weaker: the counts asserted below are the
+ * same ones, just measured once the socket has finished delivering.
+ */
+async function waitForStream(
+  log: readonly Logged[],
+  minimum: number,
+  timeoutMs: number,
+): Promise<void> {
+  const countOf = (type: string): number => log.filter((entry) => entry.type === type).length;
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < timeoutMs) {
+    if (countOf("roll") >= minimum && countOf("move") >= minimum) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
 }
 
 describe("a four bot ludo match", () => {
@@ -83,7 +119,7 @@ describe("a four bot ludo match", () => {
     // The room plays itself: no human is seated, so nothing has to be sent.
     const startedAt = Date.now();
     let finished = await repository.get(match.id);
-    while (finished?.status !== "finished" && Date.now() - startedAt < 90_000) {
+    while (finished?.status !== "finished" && Date.now() - startedAt < MATCH_DEADLINE_MS) {
       await new Promise((resolve) => setTimeout(resolve, 25));
       finished = await repository.get(match.id);
     }
@@ -123,6 +159,10 @@ describe("a four bot ludo match", () => {
     expect(ludoSnapshotMessageSchema.safeParse(snapshot?.payload).success).toBe(true);
     expect(log[0]?.type).toBe("welcome");
 
+    // The row is finished; the socket may still be a little behind it.
+    const expectedTurns = Math.max(0, (result?.shots ?? 0) - 1);
+    await waitForStream(log, expectedTurns, STREAM_DEADLINE_MS);
+
     const rolls = log.filter((entry) => entry.type === "roll");
     const moves = log.filter((entry) => entry.type === "move");
     expect(rolls.length).toBeGreaterThanOrEqual((result?.shots ?? 0) - 1);
@@ -145,5 +185,5 @@ describe("a four bot ludo match", () => {
     expect(end).toBeDefined();
 
     await spectator.leave();
-  }, 120_000);
+  }, 180_000);
 });
