@@ -39,6 +39,7 @@ import {
   type LudoState,
 } from "../engines/ludo/index.js";
 import { publish } from "../lib/events.js";
+import { resultProblem } from "./ludo-result-guard.js";
 import { MatchLogBuilder, signResult, type MatchLogEntry } from "../lib/match-log.js";
 import type {
   MatchRecord,
@@ -663,57 +664,21 @@ export class LudoMatchRunner {
   }
 
   /**
-   * Why a result cannot be signed, or null when it can.
+   * Why this result cannot be signed, or null when it can.
    *
-   * A signed result is what the books settle against, so it must agree with the
-   * board it came from. When it does not, the useful failure is here with the
-   * mismatch named, not later in the verifier with a token count.
+   * The check itself is a pure function over the board, so it can be read and
+   * tested without a repository, and it runs before anything is awaited: a
+   * result is refused before a single write goes out.
    */
   #resultProblem(result: MatchResult, state: LudoState): string | null {
-    const perPlayer = state.config.tokensPerPlayer;
-    const order = result.finishingOrder ?? [];
-    const home = result.tokensHome ?? [];
-    const seatNumbers = [...this.#deps.seats]
-      .map((seat) => seat.seat)
-      .sort((left, right) => left - right);
-
-    if (new Set(seatNumbers).size !== seatNumbers.length) {
-      return "the seat list repeats a seat";
-    }
-    if (order.length !== seatNumbers.length) {
-      return `the finishing order names ${String(order.length)} of ${String(seatNumbers.length)} seats`;
-    }
-    if (home.length !== seatNumbers.length) {
-      return `the result counts tokens home for ${String(home.length)} of ${String(seatNumbers.length)} seats`;
-    }
-    if (result.shots <= 0) {
-      return "the result counts no moves";
-    }
-
-    if (new Set(order).size !== order.length) {
-      return "the finishing order names a seat twice";
-    }
-
-    // `home` is per seat, `order` is per finishing place, so the count is looked up
-    // by seat. Everyone placed before the last one brought every token home; the
-    // last place is the seat still standing when the others finished, which is why
-    // it is placed without being home.
-    for (let position = 0; position < order.length; position += 1) {
-      const seat = order[position];
-      if (seat === undefined) {
-        continue;
-      }
-      const recorded = home[seatNumbers.indexOf(seat)] ?? -1;
-      const onBoard = homeCount(state, this.#engineSeatOf(seat));
-      if (recorded !== onBoard) {
-        return `seat ${String(seat)} is recorded with ${String(recorded)} tokens home and has ${String(onBoard)}`;
-      }
-      const isLastPlace = position === order.length - 1;
-      if (!isLastPlace && recorded !== perPlayer) {
-        return `seat ${String(seat)} is placed ${String(position + 1)} with ${String(recorded)} of ${String(perPlayer)} tokens home`;
-      }
-    }
-    return null;
+    return resultProblem({
+      result,
+      state,
+      seats: [...this.#deps.seats]
+        .slice()
+        .sort((left, right) => left.seat - right.seat)
+        .map((seat) => ({ seat: seat.seat, engineSeat: this.#engineSeatOf(seat.seat) })),
+    });
   }
 
   /** Reveals the seed, signs the result and writes both. */
