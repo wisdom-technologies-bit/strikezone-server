@@ -102,6 +102,34 @@ export type CreateMatchSeat =
     };
 
 /** What the caller must supply to start a match. */
+/**
+ * One display name per bot seat.
+ *
+ * A bot is an identity keyed by its display name, so four seats asking for "Club
+ * Bot" resolve to one player row: in Postgres that is a unique violation on
+ * match_players, and on a board it is four seats that are really one player. A
+ * repeated name is numbered, which gives each seat its own stable bot.
+ */
+function seatDisplayNames(seats: readonly CreateMatchSeat[]): Map<number, string> {
+  const used = new Map<string, number>();
+  const names = new Map<number, string>();
+
+  for (const seat of seats) {
+    if ("existingPlayer" in seat || "playerId" in seat) {
+      continue;
+    }
+
+    const base = seat.displayName ?? BOT_PROFILES[seat.botLevel].displayName;
+    const count = (used.get(base) ?? 0) + 1;
+    used.set(base, count);
+    names.set(seat.seat, count === 1 ? base : `${base} ${String(count)}`);
+  }
+
+  return names;
+}
+
+/** Matters keyed by display name are unique per bot. */
+
 export interface CreateMatchInput {
   /** Which game. Defaults to carrom, which is what every existing caller means. */
   readonly game?: "carrom" | "ludo";
@@ -178,6 +206,8 @@ export class InMemoryMatchRepository implements MatchRepository {
     const id = `match_${this.#nextMatch}`;
     this.#nextMatch += 1;
 
+    const names = seatDisplayNames(input.seats);
+
     const seats: MatchSeat[] = input.seats.map((seat) => {
       if ("existingPlayer" in seat) {
         const player = seat.existingPlayer;
@@ -206,7 +236,7 @@ export class InMemoryMatchRepository implements MatchRepository {
         };
       }
 
-      const player = this.createBot(seat.botLevel, seat.displayName, seat.skill);
+      const player = this.createBot(seat.botLevel, names.get(seat.seat), seat.skill);
       return {
         seat: seat.seat,
         playerId: player.id,
@@ -394,6 +424,7 @@ export class SupabaseMatchRepository implements MatchRepository {
   }
 
   async create(input: CreateMatchInput): Promise<MatchRecord> {
+    const names = seatDisplayNames(input.seats);
     const seatRows: Array<{ seat: number; player_id: string }> = [];
 
     for (const seat of input.seats) {
@@ -408,7 +439,7 @@ export class SupabaseMatchRepository implements MatchRepository {
       }
 
       const profile = BOT_PROFILES[seat.botLevel];
-      const displayName = seat.displayName ?? profile.displayName;
+      const displayName = names.get(seat.seat) ?? seat.displayName ?? profile.displayName;
 
       // A bot is a stable identity, not a per-match row: two matches with a Club
       // bot must seat the same Club bot, and (players_bot_display_name_key)

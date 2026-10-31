@@ -29,6 +29,7 @@ import {
   createInitialState,
   homeCount,
   resolveLudoConfig,
+  seatsOf,
   type DieSource,
   type LudoBotId,
   type LudoChooser,
@@ -157,6 +158,10 @@ export class LudoMatchRunner {
   readonly #dice: DieSource;
   readonly #log: MatchLogBuilder;
   readonly #seatsByNumber = new Map<number, LudoRunnerSeat>();
+  /** Database seat number to engine seat index. */
+  readonly #engineSeat = new Map<number, number>();
+  /** Engine seat index back to the database seat number. */
+  readonly #databaseSeat = new Map<number, SeatNumber>();
   readonly #timeouts = new Map<number, number>();
 
   #state: LudoState;
@@ -181,22 +186,78 @@ export class LudoMatchRunner {
 
   constructor(deps: LudoMatchRunnerDeps) {
     this.#deps = deps;
-    this.#config = resolveLudoConfig({ players: 4, ...deps.config });
 
     const seats = [...deps.seats].sort((left, right) => left.seat - right.seat);
+    if (seats.length !== 2 && seats.length !== 4) {
+      throw new Error(
+        `a ludo match seats two or four players, and this one seats ${String(seats.length)}`,
+      );
+    }
+    const playerIds = new Set(seats.map((seat) => seat.playerId));
+    if (playerIds.size !== seats.length) {
+      throw new Error("a ludo match cannot seat the same player twice");
+    }
+
     for (const seat of seats) {
       this.#seatsByNumber.set(seat.seat, seat);
     }
 
-    this.#state = createInitialState({ ...this.#config, players: 4 });
-    // Seats are numbered from one in the database and from zero in the engine, so
-    // the board is built from the seat table rather than from 0 to 3.
-    this.#state = {
-      ...this.#state,
-      seats: seats.map((seat) => seat.seat - 1),
-    };
+    // The board is the seat list, not a fixed four. A two seat match is played on
+    // engine seats 0 and 2, which is what `seatsOf` decides, so the seats are
+    // mapped through it rather than assumed to be zero to three.
+    this.#config = resolveLudoConfig({ ...deps.config, players: seats.length as 2 | 4 });
+    const engineSeats = seatsOf(this.#config);
+    seats.forEach((seat, index) => {
+      const engine = engineSeats[index] ?? index;
+      this.#engineSeat.set(seat.seat, engine);
+      this.#databaseSeat.set(engine, seat.seat);
+    });
+
+    this.#state = createInitialState(this.#config);
     this.#dice = deps.dice ?? createMatchDice(deps.seed, deps.matchId, 0);
     this.#log = new MatchLogBuilder(deps.seedCommit);
+  }
+
+  /** The engine's index for a seat, and the database's number for an index. */
+  #engineSeatOf(seat: SeatNumber): number {
+    return this.#engineSeat.get(seat) ?? seat - 1;
+  }
+
+  #databaseSeatOf(engineSeat: number): SeatNumber {
+    return this.#databaseSeat.get(engineSeat) ?? ((engineSeat + 1) as SeatNumber);
+  }
+
+  /**
+   * Every seat in the match, in the order it finished.
+   *
+   * The board names the seats that came home, and for a full match it also names
+   * the seat left standing. This builds the same list from the seat table rather
+   * than trusting the board to be complete: a result that names three of four
+   * seats cannot be settled, and the verifier's complaint arrives far from the
+   * cause. Any seat the board did not place is appended in board order.
+   */
+  #finishingOrder(): SeatNumber[] {
+    const placed: SeatNumber[] = [];
+    for (const engineSeat of this.#state.finishingOrder) {
+      const seat = this.#databaseSeatOf(engineSeat);
+      if (!placed.includes(seat)) {
+        placed.push(seat);
+      }
+    }
+
+    const unplaced = [...this.#deps.seats]
+      .map((seat) => seat.seat)
+      .filter((seat) => !placed.includes(seat))
+      .sort((left, right) => {
+        const leftHome = homeCount(this.#state, this.#engineSeatOf(left));
+        const rightHome = homeCount(this.#state, this.#engineSeatOf(right));
+        if (leftHome !== rightHome) {
+          return rightHome - leftHome;
+        }
+        return this.#progressOf(right) - this.#progressOf(left);
+      });
+
+    return [...placed, ...unplaced];
   }
 
   /** The board, as plain JSON. */
@@ -206,7 +267,7 @@ export class LudoMatchRunner {
 
   /** The seat number whose turn it is. */
   get seatToPlay(): SeatNumber {
-    return ((this.#state.seats[this.#state.turn] ?? 0) + 1) as SeatNumber;
+    return this.#databaseSeatOf(this.#state.seats[this.#state.turn] ?? 0);
   }
 
   /** How many turns have resolved. */
@@ -385,8 +446,8 @@ export class LudoMatchRunner {
       .map((candidate) => candidate.seat)
       .filter((candidate) => candidate !== seat)
       .sort((left, right) => {
-        const leftHome = homeCount(this.#state, left - 1);
-        const rightHome = homeCount(this.#state, right - 1);
+        const leftHome = homeCount(this.#state, this.#engineSeatOf(left));
+        const rightHome = homeCount(this.#state, this.#engineSeatOf(right));
         if (leftHome !== rightHome) {
           return rightHome - leftHome;
         }
@@ -429,7 +490,7 @@ export class LudoMatchRunner {
     return this.#deps.seats
       .slice()
       .sort((left, right) => left.seat - right.seat)
-      .map((seat) => homeCount(this.#state, seat.seat - 1));
+      .map((seat) => homeCount(this.#state, this.#engineSeatOf(seat.seat)));
   }
 
   #botDelay(): number {
@@ -542,7 +603,7 @@ export class LudoMatchRunner {
     this.#cancel?.();
     this.#cancel = null;
 
-    const finishingOrder = this.#state.finishingOrder.map((seat) => (seat + 1) as SeatNumber);
+    const finishingOrder = this.#finishingOrder();
     const result: MatchResult = {
       winnerSeat: finishingOrder[0] ?? null,
       winnerColour: "tie",
@@ -638,9 +699,12 @@ export class LudoMatchRunner {
     // last place is the seat still standing when the others finished, which is why
     // it is placed without being home.
     for (let position = 0; position < order.length; position += 1) {
-      const seat = order[position] ?? 0;
-      const recorded = home[seat - 1] ?? -1;
-      const onBoard = homeCount(state, seat - 1);
+      const seat = order[position];
+      if (seat === undefined) {
+        continue;
+      }
+      const recorded = home[seatNumbers.indexOf(seat)] ?? -1;
+      const onBoard = homeCount(state, this.#engineSeatOf(seat));
       if (recorded !== onBoard) {
         return `seat ${String(seat)} is recorded with ${String(recorded)} tokens home and has ${String(onBoard)}`;
       }

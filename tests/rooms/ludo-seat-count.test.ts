@@ -1,20 +1,19 @@
 /**
- * The seat-count bug, reproduced rather than guessed at.
+ * The seat count decides the board.
  *
- * A four-seat Ludo match played through the room and database path was ending
- * after about a hundred and twelve moves with a finishing order naming two of
- * the four seats. The in-memory engine, given four named bots, plays more than
- * four hundred moves and fills all four places.
+ * This file started as the reproduction of a live bug: a four-seat Ludo match
+ * played through the room and database path ended after about a hundred and
+ * twelve moves with a finishing order naming two of the four seats, while the
+ * same engine given four named bots played more than four hundred moves and
+ * filled all four places.
  *
- * The suspicion: `LudoMatchRunner` builds its board for four players and then
- * overwrites the seat list with whatever the database handed it. `finishSeat`
- * decides the match is over when one listed seat is still racing, so a seat list
- * shorter than the board ends the match early and the places it records are only
- * the seats it knew about.
+ * The cause was in `LudoMatchRunner`: it built the board for four players and
+ * then overwrote the seat list with whatever seats the database handed it, so a
+ * short seat list ended the match early through `finishSeat`, and a two-seat
+ * match put its players on adjacent seats instead of opposite ones. The runner
+ * now takes its player count and its seat mapping from the seats themselves.
  *
- * These are reproductions, not requirements. Each one logs what the seat list
- * actually became, and asserts the observed behaviour so the failure is a number
- * in the output rather than a hunch. Step two turns them into requirements.
+ * These are requirements now, not observations.
  */
 
 import { describe, expect, it } from "vitest";
@@ -25,6 +24,7 @@ import { LudoMatchRunner, type LudoRunnerSeat } from "../../src/rooms/ludo-match
 
 interface Played {
   readonly seatsGiven: number;
+  readonly playerIds: readonly string[];
   readonly stateSeats: readonly number[];
   readonly moves: number;
   readonly finishingOrder: readonly number[];
@@ -46,13 +46,9 @@ function quietSeat(seat: LudoRunnerSeat): LudoRunnerSeat {
  * Plays a Ludo match the way the room does: create it in the repository, read the
  * seats back, hand them to the runner, and wait for the end.
  */
-async function play(options: {
-  readonly names: readonly string[];
-  readonly config?: { readonly players?: number };
-}): Promise<Played> {
+async function play(options: { readonly names: readonly string[] }): Promise<Played> {
   const repository = new InMemoryMatchRepository();
   const seed = createMatchSeed();
-  const players = (options.config?.players ?? options.names.length) as 2 | 4;
   const match = await repository.create({
     game: "ludo",
     seedCommit: commitOf(seed),
@@ -62,13 +58,12 @@ async function play(options: {
       botPolicy: "cautious",
       displayName,
     })),
-    config: { ludo: { players } },
+    config: { ludo: { players: options.names.length } },
   });
 
   // The database path: what came back is what the runner is handed, not what was
   // asked for.
   const stored = await repository.get(match.id);
-  const seatsGiven = stored?.seats.length ?? 0;
   const seats = [...(stored?.seats ?? [])]
     .sort((left, right) => left.seat - right.seat)
     .map((seat) => quietSeat(seat));
@@ -84,7 +79,8 @@ async function play(options: {
     seedCommit: commitOf(seed),
     seats,
     repository,
-    config: { players },
+    // The runner takes the player count from the seats, so nothing is passed here.
+    config: {},
     botDelayMs: { min: 0, max: 0 },
     schedule: (delayMs, run) => {
       const timer = setTimeout(run, delayMs);
@@ -100,62 +96,108 @@ async function play(options: {
     },
   });
 
-  // Logged at construction, which is the moment the hypothesis is about.
   const stateSeats = [...runner.state.seats];
   const playersInConfig = runner.state.config.players;
 
   await runner.start();
   await ended;
 
+  const signed = await repository.get(match.id);
+
   return {
-    seatsGiven,
+    seatsGiven: stored?.seats.length ?? 0,
+    playerIds: seats.map((seat) => seat.playerId),
     stateSeats,
     moves: runner.moveNumber,
-    finishingOrder: [...runner.state.finishingOrder],
+    finishingOrder: [...(signed?.result?.finishingOrder ?? [])],
     playersInConfig,
   };
 }
 
+/** A seat list like the repository would hand over, for the error cases. */
+function seatsFor(count: number, playerId: (index: number) => string): LudoRunnerSeat[] {
+  return Array.from({ length: count }, (_unused, index) => ({
+    seat: (index + 1) as 1 | 2 | 3 | 4,
+    playerId: playerId(index),
+    displayName: `Bot ${String(index + 1)}`,
+    isBot: true,
+    botPolicy: "cautious",
+    profileId: null,
+  }));
+}
+
+function runnerFor(seats: readonly LudoRunnerSeat[]): LudoMatchRunner {
+  const seed = createMatchSeed();
+  return new LudoMatchRunner({
+    matchId: "match_seats",
+    seed,
+    seedCommit: commitOf(seed),
+    seats,
+    repository: new InMemoryMatchRepository(),
+    config: {},
+    botDelayMs: { min: 0, max: 0 },
+    schedule: () => () => undefined,
+    logger,
+  });
+}
+
 describe("seat counts through the room path", () => {
-  it("seats four named bots and plays all four places", async () => {
+  it("seats four named bots and names all four places", async () => {
     const played = await play({
       names: ["Cautious Bot", "Aggressive Bot", "Racer Bot", "Steady Bot"],
     });
 
     console.log(
-      `four distinct : seats given ${String(played.seatsGiven)}, state.seats [${played.stateSeats.join(", ")}], config.players ${String(played.playersInConfig)}, moves ${String(played.moves)}, finishing [${played.finishingOrder.join(", ")}]`,
+      `four distinct : seats ${String(played.seatsGiven)}, state.seats [${played.stateSeats.join(", ")}], players ${String(played.playersInConfig)}, moves ${String(played.moves)}, finishing [${played.finishingOrder.join(", ")}]`,
     );
 
     expect(played.seatsGiven).toBe(4);
-    expect(played.stateSeats).toHaveLength(4);
-    expect(played.finishingOrder).toHaveLength(4);
+    expect(played.stateSeats).toEqual([0, 1, 2, 3]);
+    expect(played.playersInConfig).toBe(4);
     expect(played.moves).toBeGreaterThan(300);
+    expect(played.finishingOrder).toHaveLength(4);
+    expect([...played.finishingOrder].sort()).toEqual([1, 2, 3, 4]);
   }, 120_000);
 
-  it("seats four bots that share a display name, the way a bot keyed by name collapses", async () => {
+  it("gives four bots of one level four identities, so all four play", async () => {
     const played = await play({
       names: ["Cautious Bot", "Cautious Bot", "Cautious Bot", "Cautious Bot"],
     });
 
     console.log(
-      `same name     : seats given ${String(played.seatsGiven)}, state.seats [${played.stateSeats.join(", ")}], config.players ${String(played.playersInConfig)}, moves ${String(played.moves)}, finishing [${played.finishingOrder.join(", ")}]`,
+      `same name     : seats ${String(played.seatsGiven)}, players ${String(new Set(played.playerIds).size)}, state.seats [${played.stateSeats.join(", ")}], moves ${String(played.moves)}, finishing [${played.finishingOrder.join(", ")}]`,
     );
 
-    // What the database actually kept, which is the number the hypothesis turns on.
-    expect(played.seatsGiven).toBeGreaterThan(0);
+    expect(played.seatsGiven).toBe(4);
+    expect(new Set(played.playerIds).size).toBe(4);
+    expect(played.finishingOrder).toHaveLength(4);
+    expect([...played.finishingOrder].sort()).toEqual([1, 2, 3, 4]);
   }, 120_000);
 
-  it("seats two players and shows which engine seats they occupy", async () => {
-    const played = await play({ names: ["Cautious Bot", "Racer Bot"], config: { players: 2 } });
+  it("seats two players opposite each other, and names both", async () => {
+    const played = await play({ names: ["Cautious Bot", "Racer Bot"] });
 
     console.log(
-      `two seats     : seats given ${String(played.seatsGiven)}, state.seats [${played.stateSeats.join(", ")}], config.players ${String(played.playersInConfig)}, moves ${String(played.moves)}, finishing [${played.finishingOrder.join(", ")}]`,
+      `two seats     : seats ${String(played.seatsGiven)}, state.seats [${played.stateSeats.join(", ")}], players ${String(played.playersInConfig)}, moves ${String(played.moves)}, finishing [${played.finishingOrder.join(", ")}]`,
     );
 
-    // `seatsOf` puts two players on engine seats 0 and 2, opposite each other.
-    // The runner maps database seats one and two to engine seats 0 and 1, so this
-    // records which of the two the board actually holds.
-    console.log(`two seats     : engine seats the board was built with [${played.stateSeats.join(", ")}]`);
     expect(played.seatsGiven).toBe(2);
+    // `seatsOf` puts two players opposite each other, 26 cells apart.
+    expect(played.stateSeats).toEqual([0, 2]);
+    expect(played.playersInConfig).toBe(2);
+    expect(played.finishingOrder).toHaveLength(2);
+    expect([...played.finishingOrder].sort()).toEqual([1, 2]);
   }, 120_000);
+
+  it("refuses a seat count that is not two or four", () => {
+    expect(() => runnerFor(seatsFor(3, (index) => `p${String(index)}`))).toThrow(
+      /two or four players/,
+    );
+    expect(() => runnerFor(seatsFor(1, () => "p1"))).toThrow(/two or four players/);
+  });
+
+  it("refuses to seat the same player twice", () => {
+    expect(() => runnerFor(seatsFor(2, () => "same-player"))).toThrow(/same player twice/);
+    expect(() => runnerFor(seatsFor(4, () => "same-player"))).toThrow(/same player twice/);
+  });
 });
