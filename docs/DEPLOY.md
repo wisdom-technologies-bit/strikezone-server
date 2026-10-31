@@ -24,6 +24,9 @@ everything else in that list still applies. Scale the machine, not the count.
      payouts.
    - `ADMIN_API_KEY`: 32 characters or longer. The server refuses to start in
      production with anything shorter.
+
+   Generation, storage and rotation are covered in [The two secrets](#the-two-secrets).
+
 3. **Set the environment** from `.env.example`. The server validates it at start
    and exits with the list of what is wrong, so a bad deploy fails at boot rather
    than at the first bet.
@@ -89,6 +92,100 @@ seconds, which is what the stop signal is given.
 
 Do not use a plan that spins down on idle. A slept process is a lost room and an
 unsettled match; the `starter` plan in the file is the smallest that stays warm.
+
+## The two secrets
+
+Two values are secrets in the strict sense: losing control of either one is an
+incident. Everything else in `.env.example` is configuration.
+
+| Name                    | What it protects                                                     | If it changes                                         |
+| ----------------------- | -------------------------------------------------------------------- | ----------------------------------------------------- |
+| `RESULT_SIGNING_SECRET` | the signature on every match result, which is what settlement trusts | results signed with the old value no longer verify    |
+| `ADMIN_API_KEY`         | every `/api/admin/*` route, including money movements                | the old key stops working, and lockout counters reset |
+
+`SUPABASE_SERVICE_ROLE_KEY` is the third value that must never leak: it bypasses
+row level security on every table. It is a Supabase secret, not one this server
+mints, and it is rotated in the Supabase dashboard.
+
+### Generate
+
+```bash
+openssl rand -hex 32   # RESULT_SIGNING_SECRET, 64 characters
+openssl rand -hex 32   # ADMIN_API_KEY, 64 characters
+```
+
+Both go in the host's environment, never in the repository. `.env` and `.env.*`
+are ignored by git and only `.env.example` is tracked; the placeholders in it are
+not secrets. To confirm nothing has leaked:
+
+```bash
+git ls-files | xargs grep -l "$RESULT_SIGNING_SECRET" 2>/dev/null   # expect no output
+git ls-files | xargs grep -l "$ADMIN_API_KEY" 2>/dev/null           # expect no output
+```
+
+### Store, per host
+
+```bash
+# Railway
+railway variables set RESULT_SIGNING_SECRET=... ADMIN_API_KEY=...
+
+# Fly.io
+fly secrets set RESULT_SIGNING_SECRET=... ADMIN_API_KEY=...
+```
+
+Render has no settled CLI for environment variables: use **Dashboard → your
+service → Environment → Add Environment Variable**, one row per name, and save.
+The service redeploys with the new values.
+
+`render.yaml` marks both as `sync: false`, which means "entered by hand in the
+dashboard and never written to the file". Keep it that way.
+
+### The guard that enforces this
+
+Production will not start without them, and the refusal names the problem rather
+than failing later at the first bet:
+
+```console
+$ NODE_ENV=production ADMIN_API_KEY=tooshort-to-pass-the-guard npm start
+[strikezone-server] refusing to start.
+Environment configuration is invalid:
+  - ADMIN_API_KEY must be at least 32 characters in production
+
+$ NODE_ENV=production RESULT_SIGNING_SECRET= npm start
+[strikezone-server] refusing to start.
+Environment configuration is invalid:
+  - RESULT_SIGNING_SECRET is missing
+```
+
+Verified against this repository on 2026-10-31, along with a production boot on a
+generated pair answering `/health` in under two seconds.
+
+### Rotate
+
+Rotate `ADMIN_API_KEY` whenever a person who knew it leaves, or on a schedule:
+
+1. Set the new value in the host's environment. The platform restarts the service.
+2. `curl -H "x-admin-key: $NEW_KEY" https://your-host/api/admin/health-deep`
+   answers 200. The old key now answers 403, and the lockout counters start clean.
+3. Hand the new key to whoever needs the console, through a password manager. It
+   does not belong in a chat message or a commit.
+
+Rotate `RESULT_SIGNING_SECRET` only when it may have leaked, because it
+invalidates signatures rather than just access:
+
+1. Pick a moment with no match sitting between "finished" and "settled". A match
+   signed with the old secret and settled after the change fails verification, is
+   refused, and raises an alert rather than paying out on a result it cannot
+   check. That failure mode is deliberate, but it is a support ticket.
+2. Set the new value and let the service restart.
+3. Play one fresh match end to end against production
+   (`npm run money:demo:live`) and confirm `PASS` with a reconcile of zero. That
+   proves the new secret is in use and the whole settle path still works.
+4. Record the rotation somewhere with a date. An unrecorded rotation is
+   indistinguishable from a leak the next time somebody reads the logs.
+
+Settled matches keep their payouts: the ledger does not depend on the signature,
+only the decision to settle did.
 
 ## After the deploy
 

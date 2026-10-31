@@ -147,6 +147,8 @@ export function productionProblems(config: {
   readonly NODE_ENV: string;
   readonly ADMIN_API_KEY: string;
   readonly RESULT_SIGNING_SECRET?: string;
+  readonly SUPABASE_URL?: string;
+  readonly SUPABASE_SERVICE_ROLE_KEY?: string;
 }): string[] {
   if (config.NODE_ENV !== "production") {
     return [];
@@ -156,10 +158,40 @@ export function productionProblems(config: {
   if (config.ADMIN_API_KEY.length < 32) {
     problems.push("ADMIN_API_KEY must be at least 32 characters in production");
   }
-  if ((config.RESULT_SIGNING_SECRET ?? "").trim() === "") {
+
+  const secret = (config.RESULT_SIGNING_SECRET ?? "").trim();
+  if (secret === "") {
     problems.push("RESULT_SIGNING_SECRET must be set in production");
+  } else if (isPlaceholder(secret)) {
+    problems.push("RESULT_SIGNING_SECRET is still the example value from .env.example");
   }
+
+  // A long placeholder passes every length check and is the likeliest way a
+  // copied example file reaches a host. Naming it is the difference between a
+  // refusal now and an open admin route later.
+  if (isPlaceholder(config.ADMIN_API_KEY)) {
+    problems.push("ADMIN_API_KEY is still the example value from .env.example");
+  }
+  if (
+    isPlaceholder(config.SUPABASE_URL ?? "") ||
+    isPlaceholder(config.SUPABASE_SERVICE_ROLE_KEY ?? "")
+  ) {
+    problems.push(
+      "SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be the project values, not the example ones",
+    );
+  }
+
   return problems;
+}
+
+/** True for the values shipped in `.env.example`, which are never real. */
+function isPlaceholder(value: string): boolean {
+  const text = value.trim().toLowerCase();
+  return (
+    text.startsWith("replace-with") ||
+    text.startsWith("change-me") ||
+    text.includes("your-project-ref")
+  );
 }
 
 /**
