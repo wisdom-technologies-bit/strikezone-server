@@ -58,23 +58,34 @@ export class SupabaseSchedulerLease implements SchedulerLease {
   readonly #client: SupabaseClient;
   readonly #holder: string;
   readonly #seconds: number;
+  readonly #name: string;
+  readonly #lockKey: number;
 
+  /**
+   * `name` and `lockKey` let a second scheduler (the house fixtures) hold its own
+   * lease with the same function: two jobs must not share one lease, or each
+   * would skip its turn whenever the other happened to be running.
+   */
   constructor(options?: {
     readonly client?: SupabaseClient;
     readonly holder?: string;
     readonly seconds?: number;
+    readonly name?: string;
+    readonly lockKey?: number;
   }) {
     this.#client = options?.client ?? supabase;
     this.#holder = options?.holder ?? defaultHolder();
     this.#seconds = options?.seconds ?? LEASE_SECONDS;
+    this.#name = options?.name ?? LEASE_NAME;
+    this.#lockKey = options?.lockKey ?? LEASE_LOCK_KEY;
   }
 
   async acquire(): Promise<boolean> {
     const result = await this.#client.rpc("acquire_scheduler_lease", {
-      p_name: LEASE_NAME,
+      p_name: this.#name,
       p_holder: this.#holder,
       p_lease_seconds: this.#seconds,
-      p_lock_key: LEASE_LOCK_KEY,
+      p_lock_key: this.#lockKey,
     });
 
     if (result.error !== null) {
@@ -87,7 +98,7 @@ export class SupabaseSchedulerLease implements SchedulerLease {
 
   async release(): Promise<void> {
     const result = await this.#client.rpc("release_scheduler_lease", {
-      p_name: LEASE_NAME,
+      p_name: this.#name,
       p_holder: this.#holder,
     });
 

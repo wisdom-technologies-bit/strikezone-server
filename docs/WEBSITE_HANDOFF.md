@@ -109,18 +109,21 @@ control, which holds the key and re-checks that the caller is an admin.
 
 ### Public
 
-| Method | Path                       | Request | Response                                            |
-| ------ | -------------------------- | ------- | --------------------------------------------------- |
-| GET    | `/health`                  | none    | `{"ok":true,"version":"0.1.0","uptimeSeconds":237}` |
-| GET    | `/api/config`              | none    | money and limit settings                            |
-| GET    | `/api/bots`                | none    | the published bots                                  |
-| GET    | `/api/matches/:id`         | none    | one match with players                              |
-| GET    | `/api/matches/:id/markets` | none    | every market for the match                          |
-| GET    | `/api/matches/:id/replay`  | none    | the log, the result and a chain check               |
-| GET    | `/api/players/:id`         | none    | one player's profile                                |
-| GET    | `/api/leaderboard`         | none    | top players                                         |
-| GET    | `/api/tournaments`         | none    | tournament list                                     |
-| GET    | `/api/tournaments/:id`     | none    | one tournament                                      |
+| Method | Path                       | Request                   | Response                                            |
+| ------ | -------------------------- | ------------------------- | --------------------------------------------------- |
+| GET    | `/health`                  | none                      | `{"ok":true,"version":"0.1.0","uptimeSeconds":237}` |
+| GET    | `/api/config`              | none                      | money and limit settings                            |
+| GET    | `/api/bots`                | none                      | the published bots                                  |
+| GET    | `/api/matches/:id`         | none                      | one match with players                              |
+| GET    | `/api/matches/upcoming`    | `limit`, `cursor`, `game` | scheduled matches, soonest first                    |
+| GET    | `/api/matches/live`        | `limit`, `cursor`, `game` | matches in play, earliest started                   |
+| GET    | `/api/matches/recent`      | `limit`, `cursor`, `game` | finished matches, latest first                      |
+| GET    | `/api/matches/:id/markets` | none                      | every market for the match                          |
+| GET    | `/api/matches/:id/replay`  | none                      | the log, the result and a chain check               |
+| GET    | `/api/players/:id`         | none                      | one player's profile                                |
+| GET    | `/api/leaderboard`         | none                      | top players                                         |
+| GET    | `/api/tournaments`         | none                      | tournament list                                     |
+| GET    | `/api/tournaments/:id`     | none                      | one tournament                                      |
 
 ```json
 // GET /api/config
@@ -135,6 +138,93 @@ control, which holds the key and re-checks that the caller is an admin.
  "startedAt":"2026-10-30T12:49:58.038+00:00",
  "endedAt":"2026-10-30T12:51:08.491+00:00","players":[...],"markets":[...]}}
 ```
+
+```json
+// GET /api/matches/upcoming  (one row, a house fixture)
+{
+  "ok": true,
+  "nextCursor": null,
+  "matches": [
+    {
+      "id": "2f3a....",
+      "game": "ludo",
+      "status": "scheduled",
+      "tournamentId": null,
+      "isTournament": false,
+      "startedAt": null,
+      "endedAt": null,
+      "scheduledAt": "2026-10-31T10:05:00.000Z",
+      "players": [
+        {
+          "seat": 1,
+          "playerId": "...",
+          "displayName": "House Cautious",
+          "isBot": true,
+          "botLevel": "club",
+          "botPolicy": "cautious",
+          "rating": null,
+          "score": null
+        },
+        {
+          "seat": 2,
+          "playerId": "...",
+          "displayName": "House Aggressive",
+          "isBot": true,
+          "botLevel": "club",
+          "botPolicy": "aggressive",
+          "rating": null,
+          "score": null
+        },
+        {
+          "seat": 3,
+          "playerId": "...",
+          "displayName": "House Racer",
+          "isBot": true,
+          "botLevel": "club",
+          "botPolicy": "racer",
+          "rating": null,
+          "score": null
+        },
+        {
+          "seat": 4,
+          "playerId": "...",
+          "displayName": "House Steady",
+          "isBot": true,
+          "botLevel": "club",
+          "botPolicy": "cautious",
+          "rating": null,
+          "score": null
+        }
+      ],
+      "headlineMarket": {
+        "marketType": "ludo_match_winner",
+        "name": "Match winner",
+        "selections": [
+          { "selectionKey": "red", "name": "Red", "oddsDecimal": 3.24, "status": "open" },
+          { "selectionKey": "green", "name": "Green", "oddsDecimal": 2.69, "status": "open" },
+          { "selectionKey": "yellow", "name": "Yellow", "oddsDecimal": 9.14, "status": "open" },
+          { "selectionKey": "blue", "name": "Blue", "oddsDecimal": 3.69, "status": "open" }
+        ]
+      },
+      "scores": null,
+      "roomId": null
+    }
+  ]
+}
+```
+
+Everything a lobby row needs is on the summary, so a list page is one request:
+the start time, every seat (name, whether it is a bot, its level and policy, its
+rating when there is one) and the match winner market's prices. `roomId` is
+non-null only while a match is live, which is when a spectator can join it.
+
+Two notes for the UI:
+
+- **A scheduled match has no scores and no room.** Draw the kick-off time from
+  `scheduledAt` and disable its prices when the market's `status` is not `open`.
+- **`botLevel` is a Carrom tier and may be null on a Ludo bot**, whose style is
+  in `botPolicy` (`cautious`, `aggressive`, `racer`). Label whichever is present;
+  never fall back to calling a labelled bot a person.
 
 ```json
 // GET /api/matches/:id/markets
@@ -457,6 +547,24 @@ how a winning bet reads as a loss.
   player can see the machine they are facing is fair.
 
 ---
+
+## 8a. House fixtures
+
+The lobby is supplied by bot matches on a schedule: four upcoming at a time, five
+minutes apart, alternating Carrom and Ludo, each priced before it opens and played
+by bots when its time comes. They are ordinary matches in every response above,
+so nothing in the UI needs to know they are house fixtures.
+
+What that means for the site:
+
+- `/api/matches/upcoming` is normally never empty, so an empty state is a real
+  signal (fixtures paused, or the scheduler switched off) rather than the norm.
+- A fixture's markets close for in-play betting at its start time, except the ones
+  the catalogue marks live. Poll `/api/matches/:id/markets` or follow the stream:
+  a selection whose `status` is no longer `open` cannot be bet on.
+- Settlement happens seconds after the match ends, driven by the same
+  `match.finished` event a room publishes. `GET /api/matches/:id/replay` verifies
+  a fixture exactly as it verifies a tournament match.
 
 ## 9. Known limitations
 

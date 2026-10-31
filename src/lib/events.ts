@@ -97,7 +97,14 @@ export interface MatchFinishedPayload {
   readonly tournamentId: string | null;
   readonly winnerPlayerId: string | null;
   readonly loserPlayerId: string | null;
-  readonly reason: "scored" | "forfeit" | "board_limit" | "walkover";
+  /**
+   * The engine's own reason, passed through rather than translated.
+   *
+   * Carrom ends `scored`, `board_limit` or `forfeit`; Ludo ends `finished` or, for
+   * a seat that ran out of time, `timeout`. A payload that named only the Carrom
+   * four would force a Ludo finish to be described as something it was not.
+   */
+  readonly reason: "scored" | "forfeit" | "board_limit" | "walkover" | "finished" | "timeout";
   readonly scores: { readonly white: number; readonly black: number };
 }
 

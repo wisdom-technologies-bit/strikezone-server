@@ -6,6 +6,7 @@ import { rateLimit } from "express-rate-limit";
 import { monitor } from "@colyseus/monitor";
 import { createAdminMoneyRouter } from "./api/admin-money.js";
 import { createAdminRouter } from "./api/admin.js";
+import { createAdminFixturesRouter } from "./api/admin-fixtures.js";
 import { createAdminTournamentsRouter } from "./api/admin-tournaments.js";
 import { createBetsRouter } from "./api/bets.js";
 import { createPaymentsRouter } from "./api/payments.js";
@@ -129,6 +130,7 @@ export function createApp(): Express {
   app.use(createBetsRouter());
   app.use(createPaymentsRouter());
   app.use(createAdminRouter());
+  app.use(createAdminFixturesRouter());
   app.use(createAdminMoneyRouter());
   app.use(createTournamentsRouter());
   app.use(createAdminTournamentsRouter());

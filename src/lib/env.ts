@@ -90,6 +90,41 @@ const envSchema = z.object({
   MAX_MESSAGE_BYTES: z.coerce.number().int().min(256).max(1_048_576).default(4_096),
   /** Messages one client may send in a second before the room throttles it. */
   MAX_MESSAGES_PER_SECOND: z.coerce.number().int().min(1).max(1_000).default(20),
+
+  // --- House fixtures -------------------------------------------------------
+  // Off by default: deploying this code changes nothing until an operator turns
+  // it on. Every other value has a working default, so switching it on is one
+  // variable.
+  /** Whether the house keeps the lobby supplied with bot matches. */
+  FIXTURES_ENABLED: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((value) => value === "true"),
+  /** How many bot fixtures stay in `scheduled` at once. Zero pauses creation. */
+  UPCOMING_FIXTURES_TARGET: z.coerce.number().int().min(0).max(24).default(4),
+  /** The gap between two fixtures' start times, in minutes. */
+  FIXTURE_INTERVAL_MINUTES: z.coerce.number().min(1).max(240).default(5),
+  /** How long a fixture's pre-match markets are open before it starts, in seconds. */
+  BET_WINDOW_SECONDS: z.coerce.number().int().min(30).max(3_600).default(120),
+  /** Bot matches allowed to run at the same time. The host is small. */
+  MAX_CONCURRENT_HOUSE_MATCHES: z.coerce.number().int().min(1).max(8).default(2),
+  /** The games fixtures alternate between, in order. */
+  FIXTURE_GAMES: z
+    .string()
+    .default("carrom,ludo")
+    .transform((value) =>
+      value
+        .split(",")
+        .map((part) => part.trim().toLowerCase())
+        .filter((part) => part !== ""),
+    )
+    .pipe(
+      z
+        .array(z.enum(["carrom", "ludo"]))
+        .min(1, "must name at least one game")
+        .max(4)
+        .refine((games) => new Set(games).size === games.length, "must not repeat a game"),
+    ),
 });
 
 export type Env = Readonly<z.infer<typeof envSchema>>;

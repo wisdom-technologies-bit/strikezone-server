@@ -14,6 +14,8 @@ import { LudoRoom } from "./rooms/ludo-room.js";
 import { tournamentRepository } from "./tournaments/repository.js";
 import { SupabaseSchedulerLease, TournamentScheduler } from "./tournaments/scheduler.js";
 import { tournamentService } from "./tournaments/index.js";
+import { houseFixturesScheduler } from "./fixtures/index.js";
+import { attachOddsEngine } from "./odds/live.js";
 
 /**
  * Entry point: one HTTP server, one port.
@@ -78,6 +80,23 @@ void scheduler.resume().catch((error: unknown) => {
 scheduler.start();
 
 /**
+ * The house fixtures.
+ *
+ * Off unless FIXTURES_ENABLED is true, and then they are the same code the rest of
+ * the server uses: the tournament scheduler's lease pattern, the shared match
+ * repository, the real pricers and the real room. `resume()` first, so a restart
+ * picks up whatever was scheduled or waiting, and hands over anything that
+ * finished while the process was down.
+ */
+if (env.FIXTURES_ENABLED) {
+  const fixtures = houseFixturesScheduler();
+  void fixtures.resume().catch((error: unknown) => {
+    logger.error({ err: error }, "could not resume the house fixtures scheduler");
+  });
+  fixtures.start();
+}
+
+/**
  * Settlement is event driven.
  *
  * The room publishes `markets.ready_to_settle` when a match ends, and the
@@ -90,8 +109,23 @@ const unsubscribeSettlement = subscribeSettlement({
   markets: marketsRepository(),
 });
 
+/**
+ * Live repricing, for house fixtures only.
+ *
+ * The engine prices a match when it is created, closes what cannot go live at the
+ * whistle, reprices on every shot and hands the markets to settlement at the end.
+ * It is attached when fixtures are on: a match nobody watches is still a market
+ * that has to move, and a server that never attached it would leave a fixture's
+ * prices frozen at their pre-match values for the whole game.
+ */
+const oddsEngine = env.FIXTURES_ENABLED ? attachOddsEngine({ matches: matchRepository() }) : null;
+
 registerShutdownHandlers({
-  onDrain: unsubscribeSettlement,
+  onDrain: () => {
+    unsubscribeSettlement();
+    oddsEngine?.stop();
+    houseFixturesScheduler().stop();
+  },
   gameServer,
   httpServer,
   logger,

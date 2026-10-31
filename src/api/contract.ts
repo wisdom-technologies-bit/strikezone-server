@@ -490,6 +490,28 @@ export const configSchema = z.object({
 });
 export type ConfigResponse = z.infer<typeof configSchema>;
 
+/**
+ * The market a lobby row leads with: the match winner, priced.
+ *
+ * It exists so a lobby row is one request. The site does not have to fetch a
+ * match's markets to draw its two or four prices, and every selection carries its
+ * own status, so a suspended book can be shown as suspended rather than missing.
+ */
+export const headlineMarketSchema = z.object({
+  marketType: z.string(),
+  name: z.string(),
+  selections: z.array(
+    z.object({
+      selectionKey: z.string(),
+      /** The side or colour, as the catalogue names it. */
+      name: z.string(),
+      oddsDecimal: z.number().positive(),
+      status: z.enum(["open", "suspended", "closed", "settled", "void"]),
+    }),
+  ),
+});
+export type HeadlineMarket = z.infer<typeof headlineMarketSchema>;
+
 export const matchSummarySchema = z.object({
   id: z.string(),
   game: z.enum(["carrom", "ludo"]),
@@ -498,16 +520,25 @@ export const matchSummarySchema = z.object({
   isTournament: z.boolean(),
   startedAt: timestampSchema.nullable(),
   endedAt: timestampSchema.nullable(),
+  /** When a scheduled match will start. Null for a match already under way. */
+  scheduledAt: timestampSchema.nullable(),
   players: z.array(
     z.object({
-      seat: z.union([z.literal(1), z.literal(2)]),
+      /** Carrom seats two, Ludo four. */
+      seat: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]),
       playerId: z.string().nullable(),
       displayName: z.string(),
       isBot: z.boolean(),
       botLevel: botLevelSchema.nullable(),
+      /** The bot policy, so a Ludo bot's style can be named rather than guessed. */
+      botPolicy: z.string().nullable(),
+      /** The published rating, or null when nobody has given one. */
+      rating: z.number().nullable(),
       score: z.number().int().nullable(),
     }),
   ),
+  /** The match winner market, ready to draw. Null before a price is written. */
+  headlineMarket: headlineMarketSchema.nullable(),
   scores: z.object({ white: z.number().int(), black: z.number().int() }).nullable(),
   /** The room to join as a spectator, while the match is live. */
   roomId: z.string().nullable(),

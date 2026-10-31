@@ -9,6 +9,7 @@ import {
   encodeBase64,
   encodeFrames,
   frameBodies,
+  matchDetailSchema,
   positionAt,
   quantise,
   shotMessageSchema,
@@ -184,5 +185,64 @@ describe("the version", () => {
   it("is a positive integer, so a mismatch is detectable", () => {
     expect(Number.isInteger(CONTRACT_VERSION)).toBe(true);
     expect(CONTRACT_VERSION).toBeGreaterThan(0);
+  });
+});
+
+describe("the lobby row", () => {
+  /* A four seat Ludo match, priced, as the fixture scheduler serves it. */
+  const summary = {
+    id: "c0000000-0000-4000-8000-00000000f001",
+    game: "ludo" as const,
+    status: "scheduled" as const,
+    tournamentId: null,
+    isTournament: false,
+    startedAt: null,
+    endedAt: null,
+    scheduledAt: "2026-10-31T10:00:00.000Z",
+    players: [1, 2, 3, 4].map((seat) => ({
+      seat: seat as 1 | 2 | 3 | 4,
+      playerId: `bot-${String(seat)}`,
+      displayName: `House ${String(seat)}`,
+      isBot: true,
+      botLevel: "club" as const,
+      botPolicy: "cautious",
+      rating: 1200,
+      score: null,
+    })),
+    scores: null,
+    headlineMarket: {
+      marketType: "ludo_match_winner",
+      name: "Match winner",
+      selections: ["red", "green", "yellow", "blue"].map((selectionKey) => ({
+        selectionKey,
+        name: selectionKey,
+        oddsDecimal: 4.1,
+        status: "open" as const,
+      })),
+    },
+    roomId: null,
+    seedCommit: "ab".repeat(32),
+    seedReveal: null,
+    resultSignature: null,
+    logHeadHash: null,
+    result: null,
+  };
+
+  it("carries four seats, a start time and the winner market's prices", () => {
+    const parsed = matchDetailSchema.parse(summary);
+
+    expect(parsed.players).toHaveLength(4);
+    expect(parsed.players.map((player) => player.seat)).toEqual([1, 2, 3, 4]);
+    expect(parsed.scheduledAt).toBe("2026-10-31T10:00:00.000Z");
+    expect(parsed.headlineMarket?.selections).toHaveLength(4);
+  });
+
+  it("refuses a seat number the game cannot have", () => {
+    const broken = {
+      ...summary,
+      players: [{ ...summary.players[0], seat: 5 }],
+    };
+
+    expect(matchDetailSchema.safeParse(broken).success).toBe(false);
   });
 });

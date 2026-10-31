@@ -131,6 +131,14 @@ function seatDisplayNames(seats: readonly CreateMatchSeat[]): Map<number, string
 /** Matters keyed by display name are unique per bot. */
 
 export interface CreateMatchInput {
+  /**
+   * The id to create the row under, when the caller needs to know it first.
+   *
+   * A house fixture derives its seed from its id, and the commitment over that
+   * seed has to be written in the same insert, so the id must exist before the
+   * row does. Everything else lets the database choose.
+   */
+  readonly id?: string;
   /** Which game. Defaults to carrom, which is what every existing caller means. */
   readonly game?: "carrom" | "ludo";
   readonly seedCommit: string;
@@ -203,7 +211,7 @@ export class InMemoryMatchRepository implements MatchRepository {
 
   /** Creates a match with two seats. Bot seats get a bot player row. */
   async create(input: CreateMatchInput): Promise<MatchRecord> {
-    const id = `match_${this.#nextMatch}`;
+    const id = input.id ?? `match_${this.#nextMatch}`;
     this.#nextMatch += 1;
 
     const names = seatDisplayNames(input.seats);
@@ -460,7 +468,11 @@ export class SupabaseMatchRepository implements MatchRepository {
               .insert({
                 kind: "bot",
                 display_name: displayName,
-                bot_policy: profile.policy,
+                // A seat that names its own policy keeps it: a Ludo bot carries
+                // one of cautious, aggressive or racer there, and that policy is
+                // what the room plays and the pricer prices. A Carrom seat names
+                // none and gets its level's policy.
+                bot_policy: seat.botPolicy ?? profile.policy,
                 skill: seat.skill ?? {},
               })
               .select("id")
@@ -478,6 +490,7 @@ export class SupabaseMatchRepository implements MatchRepository {
     const matchInsert = await this.#client
       .from("matches")
       .insert({
+        ...(input.id === undefined ? {} : { id: input.id }),
         // The caller's game, not a guess: a Ludo match written as Carrom is a
         // match whose settlement reads the wrong catalogue, which voids every
         // market on it.

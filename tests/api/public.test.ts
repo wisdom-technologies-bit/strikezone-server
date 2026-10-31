@@ -37,6 +37,8 @@ function fakeQueries(): PublicQueries & { calls: Map<string, number> } {
     isTournament: false,
     startedAt: "2026-10-30T10:00:00.000Z",
     endedAt: "2026-10-30T10:20:00.000Z",
+    scheduledAt: null,
+    headlineMarket: null,
     players: [
       {
         seat: 1 as const,
@@ -44,6 +46,8 @@ function fakeQueries(): PublicQueries & { calls: Map<string, number> } {
         displayName: "Ada",
         isBot: false,
         botLevel: null,
+        botPolicy: null,
+        rating: null,
         score: 25,
       },
     ],

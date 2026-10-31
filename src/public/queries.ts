@@ -1,3 +1,6 @@
+import { carromCatalog } from "../odds/catalog/carrom.js";
+import { ludoCatalog } from "../odds/catalog/ludo.js";
+import type { HeadlineMarket } from "../api/contract.js";
 import type {
   LeaderboardEntry,
   LeaderboardQuery,
@@ -96,7 +99,46 @@ interface SeatRow {
     readonly display_name: string;
     readonly kind: "human" | "bot";
     readonly bot_policy: string | null;
+    /** Postgres numeric, which PostgREST may hand back as a string. */
+    readonly rating: number | string | null;
   } | null;
+}
+
+/** The market each game leads its lobby row with. */
+const HEADLINE_MARKET_TYPE = { carrom: "match_winner", ludo: "ludo_match_winner" } as const;
+
+/** Selection key to display name, per headline market, from the catalogues. */
+let headlineNames: Record<string, ReadonlyMap<string, string>> | null = null;
+
+function headlineSelectionNames(): Record<string, ReadonlyMap<string, string>> {
+  if (headlineNames !== null) {
+    return headlineNames;
+  }
+
+  const namesOf = (selections: readonly { key: string; name: string }[]) =>
+    new Map(selections.map((selection) => [selection.key, selection.name]));
+
+  const carrom = carromCatalog().markets.find(
+    (market) => market.marketType === HEADLINE_MARKET_TYPE.carrom,
+  );
+  const ludo = ludoCatalog().markets.find(
+    (market) => market.marketType === HEADLINE_MARKET_TYPE.ludo,
+  );
+
+  headlineNames = {
+    [HEADLINE_MARKET_TYPE.carrom]: namesOf(carrom?.selections ?? []),
+    [HEADLINE_MARKET_TYPE.ludo]: namesOf(ludo?.selections ?? []),
+  };
+  return headlineNames;
+}
+
+/** A rating as the contract wants it: a number, or null when there is none. */
+function ratingOf(value: number | string | null): number | null {
+  if (value === null) {
+    return null;
+  }
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 const MATCH_COLUMNS =
@@ -129,20 +171,37 @@ function botLevelOf(
 }
 
 function seatsOf(rows: readonly SeatRow[], matchId: string): MatchSummary["players"] {
-  return rows
-    .filter((row) => row.match_id === matchId && (row.seat === 1 || row.seat === 2))
-    .sort((left, right) => left.seat - right.seat)
-    .map((row) => ({
-      seat: row.seat === 2 ? (2 as const) : (1 as const),
-      playerId: row.player_id,
-      displayName: row.players?.display_name ?? "Unknown",
-      isBot: row.players?.kind === "bot",
-      botLevel: botLevelOf(row.players?.kind ?? "human", row.players?.bot_policy ?? null),
-      score: null,
-    }));
+  return (
+    rows
+      // Two seats for Carrom, four for Ludo. The database allows 1 to 4 and the
+      // game decides how many are used, so a four seat match is returned whole.
+      .filter((row) => row.match_id === matchId && row.seat >= 1 && row.seat <= 4)
+      .sort((left, right) => left.seat - right.seat)
+      .map((row) => ({
+        seat:
+          row.seat === 4
+            ? (4 as const)
+            : row.seat === 3
+              ? (3 as const)
+              : row.seat === 2
+                ? (2 as const)
+                : (1 as const),
+        playerId: row.player_id,
+        displayName: row.players?.display_name ?? "Unknown",
+        isBot: row.players?.kind === "bot",
+        botLevel: botLevelOf(row.players?.kind ?? "human", row.players?.bot_policy ?? null),
+        botPolicy: row.players?.bot_policy ?? null,
+        rating: ratingOf(row.players?.rating ?? null),
+        score: null,
+      }))
+  );
 }
 
-function summaryOf(row: MatchRow, seats: readonly SeatRow[]): MatchSummary {
+function summaryOf(
+  row: MatchRow,
+  seats: readonly SeatRow[],
+  headline: HeadlineMarket | null = null,
+): MatchSummary {
   const scores = scoresOf(row.result);
 
   return {
@@ -153,6 +212,9 @@ function summaryOf(row: MatchRow, seats: readonly SeatRow[]): MatchSummary {
     isTournament: row.tournament_id !== null,
     startedAt: row.started_at,
     endedAt: row.ended_at,
+    // A schedule is only interesting while the match has not started.
+    scheduledAt: row.status === "scheduled" ? row.scheduled_at : null,
+    headlineMarket: headline,
     players: seatsOf(seats, row.id).map((player) => ({
       ...player,
       score: scores === null ? null : player.seat === 1 ? scores.white : scores.black,
@@ -219,11 +281,14 @@ class SupabasePublicQueries implements PublicQueries {
 
     const rows = (data ?? []) as unknown as readonly MatchRow[];
     const page = rows.slice(0, query.limit);
-    const seats = await this.#seatsFor(page.map((row) => row.id));
+    const [seats, headlines] = await Promise.all([
+      this.#seatsFor(page.map((row) => row.id)),
+      this.#headlineMarkets(page),
+    ]);
     const last = page.at(-1);
 
     return {
-      matches: page.map((row) => summaryOf(row, seats)),
+      matches: page.map((row) => summaryOf(row, seats, headlines.get(row.id) ?? null)),
       nextCursor:
         rows.length > query.limit && last !== undefined
           ? kind === "recent"
@@ -249,8 +314,11 @@ class SupabasePublicQueries implements PublicQueries {
     }
 
     const row = data as unknown as MatchRow;
-    const seats = await this.#seatsFor([row.id]);
-    const summary = summaryOf(row, seats);
+    const [seats, headlines] = await Promise.all([
+      this.#seatsFor([row.id]),
+      this.#headlineMarkets([row]),
+    ]);
+    const summary = summaryOf(row, seats, headlines.get(row.id) ?? null);
     const finished = row.status === "finished" || row.status === "void";
     const winner = row.result?.["winnerColour"];
 
@@ -558,7 +626,7 @@ class SupabasePublicQueries implements PublicQueries {
 
     const { data, error } = await supabase
       .from("match_players")
-      .select("match_id, seat, player_id, players(display_name, kind, bot_policy)")
+      .select("match_id, seat, player_id, players(display_name, kind, bot_policy, rating)")
       .in("match_id", [...matchIds]);
 
     if (error !== null) {
@@ -566,6 +634,80 @@ class SupabasePublicQueries implements PublicQueries {
     }
 
     return (data ?? []) as unknown as readonly SeatRow[];
+  }
+
+  /**
+   * The match winner market of each match, in one query for the whole page.
+   *
+   * The lobby draws a price against every seat, so this is the one market the API
+   * carries on a summary. Everything else a match prices is a detail read, and a
+   * lobby that fetched all of it would ask for hundreds of rows to draw a row.
+   */
+  async #headlineMarkets(rows: readonly MatchRow[]): Promise<Map<string, HeadlineMarket>> {
+    const headlines = new Map<string, HeadlineMarket>();
+    if (rows.length === 0) {
+      return headlines;
+    }
+
+    const { data, error } = await supabase
+      .from("markets")
+      .select("match_id, market_type, selection_key, odds_decimal, status")
+      .in(
+        "match_id",
+        rows.map((row) => row.id),
+      )
+      .in("market_type", [HEADLINE_MARKET_TYPE.carrom, HEADLINE_MARKET_TYPE.ludo])
+      .order("selection_key", { ascending: true });
+
+    if (error !== null) {
+      // A lobby row without a price is still a lobby row; a 500 for the page is not.
+      logger.warn({ err: error }, "could not read the headline markets");
+      return headlines;
+    }
+
+    const byMatch = new Map<
+      string,
+      { marketType: string; selections: HeadlineMarket["selections"][number][] }
+    >();
+    const gameOf = new Map(rows.map((row) => [row.id, row.game]));
+
+    for (const stored of (data ?? []) as unknown as readonly {
+      match_id: string;
+      market_type: string;
+      selection_key: string;
+      odds_decimal: number;
+      status: "open" | "suspended" | "closed" | "settled" | "void";
+    }[]) {
+      const game = gameOf.get(stored.match_id);
+      // A match is one game; a row of the other game's winner market on it is not
+      // a headline, it is noise from a priced catalogue that does not apply.
+      if (game === undefined || stored.market_type !== HEADLINE_MARKET_TYPE[game]) {
+        continue;
+      }
+
+      const names = headlineSelectionNames()[stored.market_type];
+      const entry = byMatch.get(stored.match_id) ?? {
+        marketType: stored.market_type,
+        selections: [],
+      };
+      entry.selections.push({
+        selectionKey: stored.selection_key,
+        name: names?.get(stored.selection_key) ?? stored.selection_key,
+        oddsDecimal: Number(stored.odds_decimal),
+        status: stored.status,
+      });
+      byMatch.set(stored.match_id, entry);
+    }
+
+    for (const [matchId, entry] of byMatch) {
+      headlines.set(matchId, {
+        marketType: entry.marketType,
+        name: "Match winner",
+        selections: entry.selections,
+      });
+    }
+
+    return headlines;
   }
 
   async #entryCounts(tournamentIds: readonly string[]): Promise<Map<string, number>> {
