@@ -176,6 +176,21 @@ A failed read answers `503 {"ok":false,"error":"read_unavailable"}`.
 | POST   | `/api/withdrawals`     | `{amountMinor, destination?}`                                     | `201 {ok:true, withdrawal}`                                                                   |
 | GET    | `/api/withdrawals`     | none                                                              | `{ok:true, withdrawals:[...]}`                                                                |
 
+### A brand-new player
+
+A player who has never deposited or bet has no `wallet_accounts` row yet, and that is a normal
+state rather than an error:
+
+- `GET /api/me/wallet` answers `{ok:true, currency, availableMinor:0, atRiskMinor:0,
+pendingWithdrawalMinor:0, totalBalanceMinor:0}`.
+- `GET /api/me/transactions` answers `{ok:true, currency, transactions:[], nextCursor:null}`.
+- `GET /api/me/bets` answers `{ok:true, bets:[]}`.
+- `GET /api/me/limits` answers the defaults (three nulls) with `pending: null`.
+
+The wallet account is created by the first money movement, which is a deposit or a bet stake,
+never by a read. So the site shows zero as a balance and does not treat it as a failure; a
+genuine database error still answers `503 {ok:false, error:"read_unavailable"}`.
+
 ```json
 // POST /api/bets  {marketId, stakeMinor: 10000, expectedOdds: 3.64, idempotencyKey: "ui-8f2c-1"}
 {

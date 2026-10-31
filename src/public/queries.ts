@@ -437,17 +437,23 @@ class SupabasePublicQueries implements PublicQueries {
   async wallet(userId: string): Promise<Omit<WalletResponse, "ok">> {
     const accountId = await this.#userAccount(userId);
 
-    const { data, error } = await supabase
-      .from("account_balances")
-      .select("balance_minor")
-      .eq("account_id", accountId)
-      .maybeSingle();
+    // A player who has never deposited or bet has no account yet. That is a zero
+    // wallet, not a failure: the account appears on the first money movement, and
+    // a read must never create one.
+    let available = 0;
+    if (accountId !== null) {
+      const { data, error } = await supabase
+        .from("account_balances")
+        .select("balance_minor")
+        .eq("account_id", accountId)
+        .maybeSingle();
 
-    if (error !== null) {
-      throw new Error(`could not read the balance: ${error.message}`);
+      if (error !== null) {
+        throw new Error(`could not read the balance: ${error.message}`);
+      }
+
+      available = Number((data as { balance_minor: number } | null)?.balance_minor ?? 0);
     }
-
-    const available = Number((data as { balance_minor: number } | null)?.balance_minor ?? 0);
 
     const { data: openBets } = await supabase
       .from("bets")
@@ -485,6 +491,11 @@ class SupabasePublicQueries implements PublicQueries {
     query: { readonly limit: number; readonly cursor?: string | undefined },
   ): Promise<Omit<TransactionsPage, never> & { readonly currency: string }> {
     const accountId = await this.#userAccount(userId);
+
+    // No account means no entries, which is an empty page rather than an error.
+    if (accountId === null) {
+      return { currency: ledgerCurrency(), transactions: [], nextCursor: null };
+    }
 
     let builder = supabase
       .from("ledger_entries")
@@ -629,7 +640,14 @@ class SupabasePublicQueries implements PublicQueries {
       });
   }
 
-  async #userAccount(userId: string): Promise<string> {
+  /**
+   * The player's account id, or null when they have none yet.
+   *
+   * Reading is not the place to open an account: the ledger's `userAccount()`
+   * creates one when money first moves. A null here means an all-zero wallet and
+   * an empty ledger page.
+   */
+  async #userAccount(userId: string): Promise<string | null> {
     const { data, error } = await supabase
       .from("wallet_accounts")
       .select("id")
@@ -641,11 +659,8 @@ class SupabasePublicQueries implements PublicQueries {
     if (error !== null) {
       throw new Error(`could not find the wallet: ${error.message}`);
     }
-    if (data === null) {
-      throw new Error("this player has no wallet in this currency");
-    }
 
-    return (data as { id: string }).id;
+    return data === null ? null : (data as { id: string }).id;
   }
 
   async #balance(accountId: string): Promise<number> {
